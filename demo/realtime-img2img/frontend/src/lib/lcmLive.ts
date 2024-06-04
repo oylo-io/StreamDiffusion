@@ -1,3 +1,4 @@
+import { HOST, PORT } from '$lib/constants';
 import { writable } from 'svelte/store';
 
 
@@ -22,7 +23,7 @@ export const lcmLiveActions = {
             try {
                 const userId = crypto.randomUUID();
                 const websocketURL = `${window.location.protocol === "https:" ? "wss" : "ws"
-                    }:${window.location.host}/api/ws/${userId}`;
+                    }:${HOST}:${PORT}/api/ws/${userId}`;
 
                 websocket = new WebSocket(websocketURL);
                 websocket.onopen = () => {
@@ -82,6 +83,7 @@ export const lcmLiveActions = {
             if (data instanceof Blob) {
                 websocket.send(data);
             } else {
+                data.strength = 1.5;
                 websocket.send(JSON.stringify(data));
             }
         } else {

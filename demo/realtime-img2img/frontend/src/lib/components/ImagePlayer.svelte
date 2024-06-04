@@ -1,6 +1,7 @@
 <script lang="ts">
   import { lcmLiveStatus, LCMLiveStatus, streamId } from '$lib/lcmLive';
   import { getPipelineValues } from '$lib/store';
+  import {HOST, PORT} from '$lib/constants';
 
   import Button from '$lib/components/Button.svelte';
   import Floppy from '$lib/icons/floppy.svelte';
@@ -29,7 +30,7 @@
     <img
       bind:this={imageEl}
       class="aspect-square w-full rounded-lg"
-      src={'/api/stream/' + $streamId}
+      src={`http://${HOST}:${PORT}/api/stream/` + $streamId}
     />
     <div class="absolute bottom-1 right-1">
       <Button

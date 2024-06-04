@@ -11,6 +11,7 @@
   import { lcmLiveStatus, lcmLiveActions, LCMLiveStatus } from '$lib/lcmLive';
   import { mediaStreamActions, onFrameChangeStore } from '$lib/mediaStream';
   import { getPipelineValues, deboucedPipelineValues } from '$lib/store';
+  import { HOST, PORT } from '$lib/constants';
 
   let pipelineParams: Fields;
   let pipelineInfo: PipelineInfo;
@@ -25,7 +26,7 @@
   });
 
   async function getSettings() {
-    const settings = await fetch('/api/settings').then((r) => r.json());
+    const settings = await fetch(`http://${HOST}:${PORT}/api/settings`).then((r) => r.json());
     pipelineParams = settings.input_params.properties;
     pipelineInfo = settings.info.properties;
     isImageMode = pipelineInfo.input_mode.default === PipelineMode.IMAGE;

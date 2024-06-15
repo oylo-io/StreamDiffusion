@@ -33,6 +33,7 @@ def compile_vae_encoder(
     engine_build_options: dict = {},
 ):
     builder = EngineBuilder(model_data, vae, device=torch.device("cuda"))
+    opt_batch_size = engine_build_options.pop('opt_batch_size', opt_batch_size)
     builder.build(
         onnx_path,
         onnx_opt_path,
@@ -53,6 +54,7 @@ def compile_vae_decoder(
 ):
     vae = vae.to(torch.device("cuda"))
     builder = EngineBuilder(model_data, vae, device=torch.device("cuda"))
+    opt_batch_size = engine_build_options.pop('opt_batch_size', opt_batch_size)
     builder.build(
         onnx_path,
         onnx_opt_path,
@@ -73,6 +75,7 @@ def compile_unet(
 ):
     unet = unet.to(torch.device("cuda"), dtype=torch.float16)
     builder = EngineBuilder(model_data, unet, device=torch.device("cuda"))
+    opt_batch_size = engine_build_options.pop('opt_batch_size', opt_batch_size)
     builder.build(
         onnx_path,
         onnx_opt_path,

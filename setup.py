@@ -11,7 +11,7 @@ _deps = [
     "transformers",
     "accelerate",
     "fire",
-    "omegaconf",
+    # "omegaconf",
     "cuda-python",
     "onnx==1.15.0",
     "onnxruntime==1.16.3",
@@ -36,7 +36,7 @@ extras["dev"] = extras["xformers"] + extras["torch"] + extras["tensorrt"]
 
 install_requires = [
     deps["fire"],
-    deps["omegaconf"],
+    # deps["omegaconf"],
     deps["diffusers"],
     deps["transformers"],
     deps["accelerate"],

@@ -34,7 +34,7 @@ class EngineBuilder:
         onnx_opt_path: str,
         engine_path: str,
         opt_image_height: int = 512,
-        opt_image_width: int = 910,
+        opt_image_width: int = 904,
         opt_batch_size: int = 1,
         min_image_resolution: int = 256,
         max_image_resolution: int = 1024,

@@ -1,8 +1,21 @@
+# ML
 --extra-index-url https://download.pytorch.org/whl/cu121;
 torch
+torchvision
 diffusers>=0.29.0
 transformers>=4.35.2
 accelerate
-Pillow
 compel
 peft
+
+# ONNX & TensorRT
+cuda-python
+onnx
+onnxruntime
+onnxruntime-gpu
+onnx_graphsurgeon
+protobuf
+colored
+
+# General
+Pillow

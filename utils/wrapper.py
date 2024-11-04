@@ -464,7 +464,7 @@ class StreamDiffusionWrapper:
                     device=pipe.device, dtype=pipe.dtype
                 )
         if self.device == "mps":
-            print("Currently acceleration is not avaiable on mps device. Using normal mode instead.")
+            print("Currently acceleration is not available on mps device. Using normal mode instead.")
         else:
             try:
                 if acceleration == "xformers":

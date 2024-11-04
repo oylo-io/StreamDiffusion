@@ -1,3 +1,7 @@
+# General
+Pillow
+numpy>=2
+
 # ML
 --extra-index-url https://download.pytorch.org/whl/cu121;
 torch
@@ -17,5 +21,4 @@ onnx_graphsurgeon
 protobuf
 colored
 
-# General
-Pillow
+

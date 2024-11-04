@@ -265,7 +265,7 @@ class Engine:
 
             # Set the binding shape for input bindings
             if self.engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
-                self.context.set_input_shape(binding_name, shape)
+                self.context.set_input_shape(binding_name, tuple(shape))
 
             # Store the tensor using its binding name
             self.tensors[binding_name] = tensor

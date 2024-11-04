@@ -57,7 +57,7 @@ numpy_to_torch_dtype_dict = {
     np.float32: torch.float32,
     np.float64: torch.float64,
     np.complex64: torch.complex64,
-    np.complex128: torch.complex128,
+    np.complex128: torch.complex128
 }
 if np.version.full_version >= "1.24.0":
     numpy_to_torch_dtype_dict[np.bool_] = torch.bool
@@ -256,9 +256,10 @@ class Engine:
             # Get the binding name
             binding_name = self.engine.get_tensor_name(idx)
 
+            trt.volume()
             # Get the binding shape and data type
             shape = self.engine.get_tensor_shape(binding_name)
-            dtype = self.engine.get_tensor_dtype(binding_name)
+            dtype = trt.nptype(self.engine.get_tensor_dtype(binding_name))
 
             # Create tensor and store it
             tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype]).to(device=device)

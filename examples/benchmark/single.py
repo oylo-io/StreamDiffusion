@@ -75,7 +75,7 @@ def run(
     """       
     stream = StreamDiffusionWrapper(
         model_id_or_path=model_id_or_path,
-        t_index_list=[32, 45],
+        t_index_list=[33],
         lora_dict=lora_dict,
         mode="img2img",
         frame_buffer_size=1,
@@ -89,7 +89,7 @@ def run(
         enable_similar_image_filter=False,
         similar_image_filter_threshold=0.98,
         use_denoising_batch=use_denoising_batch,
-        cfg_type="initialize",  # initialize, full, self , none
+        # cfg_type="initialize",  # initialize, full, self , none
         seed=seed,
     )
 

@@ -28,6 +28,6 @@ RUN pip install git+https://github.com/himmelroman/StreamDiffusion.git@main#egg=
 # import tensorrt as trt
 #
 # engine = engine_from_bytes(bytes_from_path(''))
-# binding_name = self.engine.get_tensor_name(0)
+# binding_name = engine.get_tensor_name(0)
 # shape = engine.get_tensor_shape(binding_name)
 # dtype = trt.nptype(engine.get_tensor_dtype(binding_name))

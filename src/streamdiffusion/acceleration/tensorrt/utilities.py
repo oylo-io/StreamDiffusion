@@ -264,7 +264,7 @@ class Engine:
             tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype]).to(device=device)
 
             # Set the binding shape for input bindings
-            if self.engine.binding_is_input(binding_name):
+            if self.engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
                 self.context.set_binding_shape(idx, shape)
 
             # Store the tensor using its binding name

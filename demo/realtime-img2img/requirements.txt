@@ -14,7 +14,7 @@ peft
 
 # ONNX & TensorRT
 tensorrt
-polygrahpy
+polygraphy
 onnx
 onnxruntime
 onnxruntime-gpu

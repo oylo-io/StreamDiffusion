@@ -1,10 +1,9 @@
-diffusers==0.24.0
-huggingface_hub==0.10
+diffusers>=0.29.0
 transformers==4.35.2
 --extra-index-url https://download.pytorch.org/whl/cu121;
 torch
-Pillow==10.1.0
+Pillow
 accelerate==0.24.0
-compel==2.0.2
+compel>=2.0.0
 controlnet-aux==0.0.7
 peft==0.6.0

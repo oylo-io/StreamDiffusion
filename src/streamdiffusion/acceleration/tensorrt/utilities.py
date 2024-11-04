@@ -256,7 +256,6 @@ class Engine:
             # Get the binding name
             binding_name = self.engine.get_tensor_name(idx)
 
-            trt.volume()
             # Get the binding shape and data type
             shape = self.engine.get_tensor_shape(binding_name)
             dtype = trt.nptype(self.engine.get_tensor_dtype(binding_name))

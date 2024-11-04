@@ -13,12 +13,12 @@ compel
 peft
 
 # ONNX & TensorRT
-cuda-python
+tensorrt
+polygrahpy
 onnx
 onnxruntime
 onnxruntime-gpu
 onnx_graphsurgeon
+cuda-python
 protobuf
 colored
-
-

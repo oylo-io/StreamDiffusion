@@ -247,20 +247,44 @@ class Engine:
 
     def allocate_buffers(self, shape_dict=None, device="cuda"):
 
-        num_bindings = self.engine.num_bindings
-        num_profiles = self.engine.num_optimization_profiles
-        bindings_per_profile = num_bindings // num_profiles
-        for idx in range(bindings_per_profile):
-            binding = self.engine[idx]
-            if shape_dict and binding in shape_dict:
-                shape = shape_dict[binding]
-            else:
-                shape = self.engine.get_binding_shape(binding)
-            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
-            if self.engine.binding_is_input(binding):
-                self.context.set_binding_shape(idx, shape)
+        # Get the number of input and output tensors
+        num_io_tensors = self.engine.num_io_tensors
+
+        # iterate
+        for idx in range(num_io_tensors):
+
+            # Get the binding name
+            binding_name = self.engine.get_tensor_name(idx)
+
+            # Get the binding shape and data type
+            shape = self.engine.get_tensor_shape(binding_name)
+            dtype = self.engine.get_tensor_dtype(binding_name)
+
+            # Create tensor and store it
             tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype]).to(device=device)
-            self.tensors[binding] = tensor
+
+            # Set the binding shape for input bindings
+            if self.engine.binding_is_input(binding_name):
+                self.context.set_binding_shape(idx, shape)
+
+            # Store the tensor using its binding name
+            self.tensors[binding_name] = tensor
+
+        # num_bindings = self.engine.num_bindings
+        # num_profiles = self.engine.num_optimization_profiles
+        # bindings_per_profile = num_bindings // num_profiles
+        #
+        # for idx in range(bindings_per_profile):
+        #     binding = self.engine[idx]
+        #     if shape_dict and binding in shape_dict:
+        #         shape = shape_dict[binding]
+        #     else:
+        #         shape = self.engine.get_binding_shape(binding)
+        #     dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+        #     if self.engine.binding_is_input(binding):
+        #         self.context.set_binding_shape(idx, shape)
+        #     tensor = torch.empty(tuple(shape), dtype=numpy_to_torch_dtype_dict[dtype]).to(device=device)
+        #     self.tensors[binding] = tensor
 
     def infer(self, feed_dict, stream, use_cuda_graph=False):
         for name, buf in feed_dict.items():

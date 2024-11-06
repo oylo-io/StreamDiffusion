@@ -17,6 +17,7 @@ _deps = [
     "onnx_graphsurgeon>=0.5.2",
     "protobuf==3.20.2",
     "colored",
+    "xformers",
     "pywin32;sys_platform == 'win32'"
 ]
 

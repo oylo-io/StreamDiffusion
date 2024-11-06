@@ -9,7 +9,6 @@ transformers>=4.35.2
 accelerate
 compel
 peft
-xformers
 
 # ONNX & TensorRT
 tensorrt

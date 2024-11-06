@@ -14,11 +14,11 @@ RUN apt-get update && \
 COPY ./requirements3.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip uninstall -y triton && \
-    rm -rf /root/.cache/pip
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 RUN pip install --no-cache-dir git+https://github.com/himmelroman/StreamDiffusion.git@main#egg=streamdiffusion && \
     pip uninstall -y triton && \
-    rm -rf /root/.cache/pip
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 ENV LD_LIBRARY_PATH=/opt/conda/lib:/opt/conda/lib/python3.10/site-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH
 

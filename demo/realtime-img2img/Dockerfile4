@@ -20,6 +20,6 @@ RUN pip install --no-cache-dir git+https://github.com/himmelroman/StreamDiffusio
     pip uninstall -y triton && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
-ENV LD_LIBRARY_PATH=/opt/conda/lib:/opt/conda/lib/python3.10/site-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH
 
 # du -h -d 1 "$(pip -V | cut -d ' ' -f 4 | sed 's/pip//g')" | grep -vE "dist-info|_distutils_hack|__pycache__" | sort -h

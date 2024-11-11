@@ -12,6 +12,31 @@ from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt.engine import AutoencoderKLEngine, UNet2DConditionModelEngine
 from streamdiffusion.image_utils import postprocess_image
 
+from diffusers.models.modeling_utils import ModelMixin
+
+
+class TensorRTVAEWrapper(ModelMixin):
+    def __init__(self, trt_vae_engine):
+        super().__init__()
+        self.trt_vae_engine = trt_vae_engine
+
+    def encode(self, *args, **kwargs):
+        # Call the encoding part of your TensorRT VAE engine
+        return self.trt_vae_engine.encode(*args, **kwargs)
+
+    def decode(self, *args, **kwargs):
+        # Call the decoding part of your TensorRT VAE engine
+        return self.trt_vae_engine.decode(*args, **kwargs)
+
+class TensorRTUNetWrapper(ModelMixin):
+    def __init__(self, trt_unet_engine):
+        super().__init__()
+        self.trt_unet_engine = trt_unet_engine
+
+    def forward(self, *args, **kwargs):
+        # Call your TensorRT UNet engine's forward method here
+        return self.trt_unet_engine(*args, **kwargs)
+
 
 def run(
         trt_engine_dir: str = '/root/app/tensorrt/trt10/sd-turbo/'
@@ -78,8 +103,8 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     # init diffusers pipeline
     pipe = StableDiffusionPipeline.from_pretrained(
         model_id,
-        vae=trt_vae,
-        unet=trt_unet,
+        vae=TensorRTVAEWrapper(trt_vae),
+        unet=TensorRTUNetWrapper(trt_unet),
         torch_dtype=dtype,
         safety_checker=None,
         requires_safety_checker=False

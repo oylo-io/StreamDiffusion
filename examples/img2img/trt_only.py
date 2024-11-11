@@ -20,6 +20,7 @@ class TensorRTVAEWrapper(ModelMixin):
     def __init__(self, trt_vae_engine):
         super().__init__()
         self.trt_vae_engine = trt_vae_engine
+        self.config = FrozenDict({'in_channels': 3, 'out_channels': 3, 'encoder_block_out_channels': [64, 64, 64, 64], 'decoder_block_out_channels': [64, 64, 64, 64], 'act_fn': 'relu', 'upsample_fn': 'nearest', 'latent_channels': 4, 'upsampling_scaling_factor': 2, 'num_encoder_blocks': [1, 3, 3, 3], 'num_decoder_blocks': [3, 3, 3, 1], 'latent_magnitude': 3, 'latent_shift': 0.5, 'force_upcast': False, 'scaling_factor': 1.0, 'shift_factor': 0.0, 'block_out_channels': [64, 64, 64, 64], '_class_name': 'AutoencoderTiny', '_diffusers_version': '0.30.0', '_name_or_path': 'madebyollin/taesd'})
 
     def encode(self, *args, **kwargs):
         # Call the encoding part of your TensorRT VAE engine
@@ -118,11 +119,6 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
 def load_trt_vae(cuda_stream, vae_encoder_path, vae_decoder_path,
                  device = "cuda", dtype = torch.float16, vae_scale_factor = 8):
 
-    # load tiny vae
-    vae = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(
-        device=device, dtype=dtype
-    )
-
     # load TRT vae engine
     trt_vae = AutoencoderKLEngine(
         vae_encoder_path,
@@ -133,8 +129,7 @@ def load_trt_vae(cuda_stream, vae_encoder_path, vae_decoder_path,
     )
 
     # take config
-    setattr(trt_vae, "config", vae.config)
-    setattr(trt_vae, "dtype", vae.dtype)
+    # setattr(trt_vae, "dtype", vae.dtype)
 
     return trt_vae
 
@@ -164,3 +159,9 @@ def get_image(url, width, height):
 
 if __name__ == "__main__":
     fire.Fire(run)
+
+
+# pip install --no-cache-dir git+https://github.com/himmelroman/StreamDiffusion.git@main#egg=streamdiffusion
+# git clone https://github.com/oylo-io/StreamDiffusion.git
+# cd StreamDiffusion/examples/img2img/
+# python trt_only.py

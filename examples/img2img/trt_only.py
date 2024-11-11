@@ -1,7 +1,10 @@
+import io
 from pathlib import Path
 
 import fire
+import requests
 import torch
+from PIL import Image
 from polygraphy import cuda
 from diffusers import AutoencoderTiny, StableDiffusionPipeline
 
@@ -10,9 +13,8 @@ from streamdiffusion.acceleration.tensorrt.engine import AutoencoderKLEngine, UN
 from streamdiffusion.image_utils import postprocess_image
 
 
-def main(
-    input_image_path,
-    trt_engine_dir
+def run(
+        trt_engine_dir: str = '/root/app/tensorrt/trt10/sd-turbo/'
 ):
 
     # load trt pipeline
@@ -32,13 +34,14 @@ def main(
     )
 
     # prepare
+    image = get_image("https://avatars.githubusercontent.com/u/79290761", 904, 512)
     stream.prepare(
         prompt="test this",
         negative_prompt="low quality, bad quality, blurry, low resolution"
     )
 
     # pre-process image
-    input_latent = stream.image_processor.preprocess(input_image_path)
+    input_latent = stream.image_processor.preprocess(image)
 
     # warmup
     for _ in range(5):
@@ -119,5 +122,18 @@ def load_trt_unet(cuda_stream, unet_path):
 
     return trt_unet
 
+
+def get_image(url, width, height):
+
+    # get image
+    response = requests.get(url)
+
+    # load & resize
+    image = Image.open(io.BytesIO(response.content))
+    image = image.resize((width, height))
+
+    # return
+    return image
+
 if __name__ == "__main__":
-    fire.Fire(main)
+    fire.Fire(run)

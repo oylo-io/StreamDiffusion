@@ -73,10 +73,10 @@ def run(
 
     # warmup
     for _ in range(5):
-        stream(image=input_latent)
+        stream(input_latent)
 
     # generate final sample image
-    output_latent = stream(image=input_latent)
+    output_latent = stream(input_latent)
 
     # post-process image
     image = postprocess_image(output_latent, output_type='pil')

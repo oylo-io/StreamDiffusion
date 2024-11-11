@@ -111,7 +111,7 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
         torch_dtype=dtype,
         safety_checker=None,
         requires_safety_checker=False
-    )
+    ).to(device=device, dtype=dtype)
 
     return pipe
 

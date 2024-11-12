@@ -17,7 +17,7 @@ from streamdiffusion.image_filter import SimilarImageFilter
 class StreamDiffusion:
     def __init__(
         self,
-        pipe: StableDiffusionPipeline,
+        pipe: Optional[StableDiffusionPipeline],
         t_index_list: List[int],
         torch_dtype: torch.dtype = torch.float16,
         width: int = 512,
@@ -26,8 +26,14 @@ class StreamDiffusion:
         use_denoising_batch: bool = True,
         frame_buffer_size: int = 1,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
+        device: Optional[str] = None,
+        vae_scale_factor: Optional[int] = 8
     ) -> None:
-        self.device = pipe.device
+
+        # optional arguments
+        self.device = pipe.device if pipe else device
+        self.vae_scale_factor = pipe.vae_scale_factor if pipe else vae_scale_factor
+
         self.dtype = torch_dtype
         self.generator = None
 
@@ -69,15 +75,20 @@ class StreamDiffusion:
         self.similar_filter = SimilarImageFilter()
         self.prev_image_result = None
 
-        self.pipe = pipe
-        self.image_processor = VaeImageProcessor(pipe.vae_scale_factor)
-
-        self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
-        self.text_encoder = pipe.text_encoder
-        self.unet = pipe.unet
-        self.vae = pipe.vae
-
+        self.image_processor = VaeImageProcessor(self.vae_scale_factor)
         self.inference_time_ema = 0
+
+        # check if sd pipeline instance provided
+        if pipe:
+
+            # save pipe
+            self.pipe = pipe
+
+            # save pipeline components
+            self.vae = pipe.vae
+            self.unet = pipe.unet
+            self.text_encoder = pipe.text_encoder
+            self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
 
     def load_lcm_lora(
         self,
@@ -87,6 +98,10 @@ class StreamDiffusion:
         adapter_name: Optional[Any] = None,
         **kwargs,
     ) -> None:
+
+        if not self.pipe:
+            raise Exception("No pipeline")
+
         self.pipe.load_lora_weights(
             pretrained_model_name_or_path_or_dict, adapter_name, **kwargs
         )
@@ -97,6 +112,10 @@ class StreamDiffusion:
         adapter_name: Optional[Any] = None,
         **kwargs,
     ) -> None:
+
+        if not self.pipe:
+            raise Exception("No pipeline")
+
         self.pipe.load_lora_weights(
             pretrained_lora_model_name_or_path_or_dict, adapter_name, **kwargs
         )
@@ -108,6 +127,10 @@ class StreamDiffusion:
         lora_scale: float = 1.0,
         safe_fusing: bool = False,
     ) -> None:
+
+        if not self.pipe:
+            raise Exception("No pipeline")
+
         self.pipe.fuse_lora(
             fuse_unet=fuse_unet,
             fuse_text_encoder=fuse_text_encoder,
@@ -164,10 +187,10 @@ class StreamDiffusion:
 
         encoder_output = self.pipe.encode_prompt(
             prompt=prompt,
+            negative_prompt=negative_prompt,
             device=self.device,
             num_images_per_prompt=1,
             do_classifier_free_guidance=do_classifier_free_guidance,
-            negative_prompt=negative_prompt,
         )
         self.prompt_embeds = encoder_output[0].repeat(self.batch_size, 1, 1)
 

@@ -88,8 +88,17 @@ def run(
     pipe_start = timer_event.Event(enable_timing=True)
     pipe_end = timer_event.Event(enable_timing=True)
 
+    # warmup
+    for _ in range(3):
+        trt_pipe(prompt='warmup',
+                 image=image,
+                 num_inference_steps=1,
+                 guidance_scale=1.0,
+                 height=512,
+                 width=904)
+
     results = []
-    for _ in tqdm(range(50)):
+    for _ in tqdm(range(100)):
         pipe_start.record()
         result = trt_pipe(prompt='beautiful female dog',
                           image=image,
@@ -127,7 +136,7 @@ def run(
         stream(input_latent)
 
     results = []
-    for _ in tqdm(range(50)):
+    for _ in tqdm(range(100)):
         pipe_start.record()
         output_latent = stream(input_latent)
         pipe_end.record()

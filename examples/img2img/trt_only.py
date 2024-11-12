@@ -86,6 +86,7 @@ def run(
     result = trt_pipe(prompt='beautiful female dog',
                       image=image,
                       num_inference_steps=1,
+                      guidance_scale=1.0,
                       height=512,
                       width=904
                       ).images

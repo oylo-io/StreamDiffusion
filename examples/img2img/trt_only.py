@@ -87,15 +87,6 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     # process path
     trt_engine_dir = Path(trt_engine_dir)
 
-    # Initialize a partial pipeline
-    pipe = StableDiffusionPipeline.from_pretrained(
-        "stabilityai/sd-turbo",
-        torch_dtype=torch.float16,
-        vae=None,  # Placeholder
-        unet=None  # Placeholder
-    )
-    pipe.to("cuda")  # Move tokenizer and text encoder to CUDA
-
     # create cuda stream
     cuda_stream = cuda.Stream()
 
@@ -122,9 +113,14 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     #     requires_safety_checker=False
     # ).to(device=device, dtype=dtype)
 
-    # Replace pipeline's VAE and UNet with the custom engines
-    pipe.vae = TensorRTVAEWrapper(trt_vae)
-    pipe.unet = TensorRTUNetWrapper(trt_unet)
+    # Initialize a partial pipeline
+    pipe = StableDiffusionPipeline.from_pretrained(
+        "stabilityai/sd-turbo",
+        torch_dtype=torch.float16,
+        vae=TensorRTVAEWrapper(trt_vae),
+        unet=TensorRTUNetWrapper(trt_unet)
+    )
+    pipe.to("cuda")  # Move tokenizer and text encoder to CUDA
 
     return pipe
 

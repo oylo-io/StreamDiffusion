@@ -70,41 +70,41 @@ class TensorRTUNetWrapper(ModelMixin):
         return self.trt_unet_engine(*args, **kwargs)
 
 
-class CachedEmbeddingPipeline(StableDiffusionPipeline):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # prompt embedding cache
-        self.cached_prompt = None
-        self.cached_prompt_embeds = None
-
-    @torch.no_grad()
-    def update_prompt(self, prompt: str) -> None:
-
-        # compute embedding
-        encoder_output = self.encode_prompt(
-            prompt=prompt,
-            device=self.device,
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=False
-        )
-
-        # update cache
-        self.cached_prompt = prompt
-        self.cached_prompt_embeds = encoder_output[0]
-
-    def __call__(self, prompt, *args, **kwargs):
-
-        # Ensure prompt embedding is up-to-date
-        if prompt != self.cached_prompt or self.cached_prompt_embeds is None:
-            self.update_prompt(prompt)
-
-        # Call the main pipeline with cached embeddings
-        return super().__call__(
-            prompt_embeds=self.cached_prompt_embeds,
-            *args,
-            **kwargs
-        )
+# class CachedEmbeddingPipeline(StableDiffusionPipeline):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#
+#         # prompt embedding cache
+#         self.cached_prompt = None
+#         self.cached_prompt_embeds = None
+#
+#     @torch.no_grad()
+#     def update_prompt(self, prompt: str) -> None:
+#
+#         # compute embedding
+#         encoder_output = self.encode_prompt(
+#             prompt=prompt,
+#             device=self.device,
+#             num_images_per_prompt=1,
+#             do_classifier_free_guidance=False
+#         )
+#
+#         # update cache
+#         self.cached_prompt = prompt
+#         self.cached_prompt_embeds = encoder_output[0]
+#
+#     def __call__(self, prompt, *args, **kwargs):
+#
+#         # Ensure prompt embedding is up-to-date
+#         if prompt != self.cached_prompt or self.cached_prompt_embeds is None:
+#             self.update_prompt(prompt)
+#
+#         # Call the main pipeline with cached embeddings
+#         return super().__call__(
+#             prompt_embeds=self.cached_prompt_embeds,
+#             *args,
+#             **kwargs
+#         )
 
 
 def run(
@@ -249,7 +249,7 @@ def load_trt_pipeline(
     )
 
     # create SD pipeline
-    pipe = CachedEmbeddingPipeline.from_pretrained(
+    pipe = StableDiffusionPipeline.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
         vae=TensorRTVAEWrapper(trt_vae),

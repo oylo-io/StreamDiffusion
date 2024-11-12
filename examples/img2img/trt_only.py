@@ -2,12 +2,14 @@ import io
 from pathlib import Path
 
 import fire
+import numpy as np
 import torch
 import requests
 from PIL import Image
 from polygraphy import cuda
 from diffusers import StableDiffusionPipeline
 from diffusers.configuration_utils import FrozenDict
+from tqdm import tqdm
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.image_utils import postprocess_image
@@ -81,44 +83,76 @@ def run(
         trt_engine_dir=trt_engine_dir
     )
 
-    result = trt_pipe(prompt='beautiful female dog',
-                      image=image,
-                      num_inference_steps=1,
-                      guidance_scale=1.0,
-                      height=512,
-                      width=904
-                      ).images
-    result[0].save('/tmp/pipe_out.png')
+    # prepare timers
+    timer_event = getattr(torch, "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    pipe_start = timer_event.Event(enable_timing=True)
+    pipe_end = timer_event.Event(enable_timing=True)
+
+    results = []
+    for _ in tqdm(range(50)):
+        pipe_start.record()
+        result = trt_pipe(prompt='beautiful female dog',
+                          image=image,
+                          num_inference_steps=1,
+                          guidance_scale=1.0,
+                          height=512,
+                          width=904
+                          ).images
+        pipe_end.record()
+        timer_event.synchronize()
+        results.append(pipe_start.elapsed_time(pipe_end))
+    print_results('pipe', results)
 
     # init stream diffusion
     stream = StreamDiffusion(
         pipe=trt_pipe,
         t_index_list=[34],
         torch_dtype=torch.float16,
-        width=904,
         height=512,
+        width=904,
         cfg_type='self'
     )
 
     # prepare
     stream.prepare(
-        prompt="test this",
-        negative_prompt="low quality, bad quality, blurry, low resolution"
+        prompt='beautiful female dog',
+        guidance_scale=1.0
     )
 
     # pre-process image
     input_latent = stream.image_processor.preprocess(image)
 
     # warmup
-    for _ in range(5):
+    for _ in range(3):
         stream(input_latent)
 
-    # generate final sample image
-    output_latent = stream(input_latent)
+    results = []
+    for _ in tqdm(range(50)):
+        pipe_start.record()
+        output_latent = stream(input_latent)
+        pipe_end.record()
+        timer_event.synchronize()
+        results.append(pipe_start.elapsed_time(pipe_end))
+    print_results('stream', results)
 
     # post-process image
     image = postprocess_image(output_latent, output_type='pil')
     image[0].save('/tmp/stream_out.png')
+
+
+def print_results(title, results):
+
+    print(title.upper())
+
+    # print results
+    print(f"Average time: {sum(results) / len(results)}ms")
+    print(f"Average FPS: {1000 / (sum(results) / len(results))}")
+
+    fps_arr = 1000 / np.array(results)
+    print(f"Max FPS: {np.max(fps_arr)}")
+    print(f"Min FPS: {np.min(fps_arr)}")
+    print(f"Std: {np.std(fps_arr)}")
+
 
 def load_trt_pipeline(
         trt_engine_dir,

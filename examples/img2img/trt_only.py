@@ -123,8 +123,8 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     # ).to(device=device, dtype=dtype)
 
     # Replace pipeline's VAE and UNet with the custom engines
-    pipe.vae = trt_vae
-    pipe.unet = trt_unet
+    pipe.vae = TensorRTVAEWrapper(trt_vae)
+    pipe.unet = TensorRTUNetWrapper(trt_unet)
 
     return pipe
 

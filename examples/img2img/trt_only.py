@@ -2,17 +2,16 @@ import io
 from pathlib import Path
 
 import fire
-import requests
 import torch
+import requests
 from PIL import Image
-from click import prompt
-from diffusers.configuration_utils import FrozenDict
 from polygraphy import cuda
-from diffusers import AutoencoderTiny, StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline
+from diffusers.configuration_utils import FrozenDict
 
 from streamdiffusion import StreamDiffusion
-from streamdiffusion.acceleration.tensorrt.engine import AutoencoderKLEngine, UNet2DConditionModelEngine
 from streamdiffusion.image_utils import postprocess_image
+from streamdiffusion.acceleration.tensorrt.engine import AutoencoderKLEngine, UNet2DConditionModelEngine
 
 from diffusers.models.modeling_utils import ModelMixin
 
@@ -66,7 +65,6 @@ class TensorRTUNetWrapper(ModelMixin):
         return "cuda"
 
     def forward(self, *args, **kwargs):
-        # Call your TensorRT UNet engine's forward method here
         return self.trt_unet_engine(*args, **kwargs)
 
 
@@ -122,7 +120,12 @@ def run(
     image = postprocess_image(output_latent, output_type='pil')
     image[0].save('/tmp/stream_out.png')
 
-def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.float16):
+def load_trt_pipeline(
+        trt_engine_dir,
+        model_id = "stabilityai/sd-turbo",
+        vae_scale_factor = 8,
+        device = "cuda",
+        dtype=torch.float16):
 
     # process path
     trt_engine_dir = Path(trt_engine_dir)
@@ -130,32 +133,23 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     # create cuda stream
     cuda_stream = cuda.Stream()
 
-    # load trt engines
-    trt_vae = load_trt_vae(
-        cuda_stream=cuda_stream,
-        vae_encoder_path=str(trt_engine_dir / 'vae_encoder.engine'),
-        vae_decoder_path=str(trt_engine_dir / 'vae_decoder.engine'),
-        device=device,
-        dtype=dtype
-    )
-    trt_unet = load_trt_unet(
-        cuda_stream=cuda_stream,
-        unet_path=str(trt_engine_dir / 'unet.engine'),
+    # load TensorRT VAE
+    trt_vae = AutoencoderKLEngine(
+        encoder_path=str(trt_engine_dir / 'vae_encoder.engine'),
+        decoder_path=str(trt_engine_dir / 'vae_decoder.engine'),
+        stream=cuda_stream,
+        scaling_factor=vae_scale_factor
     )
 
-    # # init diffusers pipeline
-    # pipe = StableDiffusionPipeline.from_pretrained(
-    #     model_id,
-    #     vae=TensorRTVAEWrapper(trt_vae),
-    #     unet=TensorRTUNetWrapper(trt_unet),
-    #     torch_dtype=dtype,
-    #     safety_checker=None,
-    #     requires_safety_checker=False
-    # ).to(device=device, dtype=dtype)
+    # load TensorRT UNET
+    trt_unet = UNet2DConditionModelEngine(
+        filepath=str(trt_engine_dir / 'unet.engine'),
+        stream=cuda_stream
+    )
 
-    # Initialize a partial pipeline
+    # create SD pipeline
     pipe = StableDiffusionPipeline.from_pretrained(
-        "stabilityai/sd-turbo",
+        model_id,
         torch_dtype=torch.float16,
         vae=TensorRTVAEWrapper(trt_vae),
         unet=TensorRTUNetWrapper(trt_unet)
@@ -165,35 +159,6 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
     pipe.text_encoder.to(device, dtype=dtype)
 
     return pipe
-
-
-def load_trt_vae(cuda_stream, vae_encoder_path, vae_decoder_path,
-                 device = "cuda", dtype = torch.float16, vae_scale_factor = 8):
-
-    # load TRT vae engine
-    trt_vae = AutoencoderKLEngine(
-        vae_encoder_path,
-        vae_decoder_path,
-        cuda_stream,
-        vae_scale_factor,
-        use_cuda_graph=False,
-    )
-
-    # take config
-    # setattr(trt_vae, "dtype", vae.dtype)
-
-    return trt_vae
-
-def load_trt_unet(cuda_stream, unet_path):
-
-    # load TRT unet engine
-    trt_unet = UNet2DConditionModelEngine(
-        unet_path,
-        cuda_stream,
-        use_cuda_graph=False
-    )
-
-    return trt_unet
 
 
 def get_image(url, width, height):

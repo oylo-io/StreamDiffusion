@@ -120,11 +120,6 @@ def run(
         trt_engine_dir=trt_engine_dir
     )
 
-    # prepare timers
-    timer_event = getattr(torch, "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-    pipe_start = timer_event.Event(enable_timing=True)
-    pipe_end = timer_event.Event(enable_timing=True)
-
     # warmup
     for _ in range(3):
         trt_pipe(prompt='warmup',
@@ -133,6 +128,11 @@ def run(
                  guidance_scale=1.0,
                  height=512,
                  width=904)
+
+    # prepare timers
+    timer_event = getattr(torch, "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    pipe_start = timer_event.Event(enable_timing=True)
+    pipe_end = timer_event.Event(enable_timing=True)
 
     results = []
     for _ in tqdm(range(100)):
@@ -149,6 +149,28 @@ def run(
         results.append(pipe_start.elapsed_time(pipe_end))
     print_results('pipe', results)
 
+    # encode prompt
+    prompt_embeds = trt_pipe.encode_prompt(prompt='beautiful female dog',
+                                           device=trt_pipe.device,
+                                           num_images_per_prompt=1,
+                                           do_classifier_free_guidance=False
+                                           )[0]
+
+    results = []
+    for _ in tqdm(range(100)):
+        pipe_start.record()
+        result = trt_pipe(prompt_embeds=prompt_embeds,
+                          image=image,
+                          num_inference_steps=1,
+                          guidance_scale=1.0,
+                          height=512,
+                          width=904
+                          ).images
+        pipe_end.record()
+        timer_event.synchronize()
+        results.append(pipe_start.elapsed_time(pipe_end))
+    print_results('pipe_embeds', results)
+
     # init stream diffusion
     stream = StreamDiffusion(
         pipe=trt_pipe,
@@ -161,8 +183,7 @@ def run(
 
     # prepare
     stream.prepare(
-        prompt='beautiful female dog',
-        guidance_scale=1.0
+        prompt='beautiful female dog'
     )
 
     # pre-process image

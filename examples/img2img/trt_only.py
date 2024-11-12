@@ -5,6 +5,7 @@ import fire
 import requests
 import torch
 from PIL import Image
+from click import prompt
 from diffusers.configuration_utils import FrozenDict
 from polygraphy import cuda
 from diffusers import AutoencoderTiny, StableDiffusionPipeline
@@ -73,11 +74,22 @@ def run(
         trt_engine_dir: str = '/root/app/tensorrt/trt10/sd-turbo/'
 ):
 
+    # get input image
+    image = get_image("https://avatars.githubusercontent.com/u/79290761", 904, 512)
+
     # load trt pipeline
     trt_pipe = load_trt_pipeline(
         model_id="stabilityai/sd-turbo",
         trt_engine_dir=trt_engine_dir
     )
+
+    result = trt_pipe(prompt='beautiful female dog',
+                      image=image,
+                      num_inference_steps=1,
+                      height=512,
+                      width=904
+                      ).images
+    result[0].save('/tmp/pipe_out.png')
 
     # init stream diffusion
     stream = StreamDiffusion(
@@ -90,7 +102,6 @@ def run(
     )
 
     # prepare
-    image = get_image("https://avatars.githubusercontent.com/u/79290761", 904, 512)
     stream.prepare(
         prompt="test this",
         negative_prompt="low quality, bad quality, blurry, low resolution"
@@ -108,7 +119,7 @@ def run(
 
     # post-process image
     image = postprocess_image(output_latent, output_type='pil')
-    image[0].save('/tmp/output.png')
+    image[0].save('/tmp/stream_out.png')
 
 def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.float16):
 

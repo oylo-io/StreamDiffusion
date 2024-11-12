@@ -121,8 +121,7 @@ def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.f
         unet=TensorRTUNetWrapper(trt_unet)
     )
 
-    # Set the device and dtype for individual pipeline components manually
-    pipe.tokenizer.to(device)
+    # Set the device and dtype for text encoder
     pipe.text_encoder.to(device, dtype=dtype)
 
     return pipe

@@ -108,7 +108,7 @@ def run(
 
     # post-process image
     image = postprocess_image(output_latent, output_type='pil')
-    image.save('/tmp/output.png')
+    image[0].save('/tmp/output.png')
 
 def load_trt_pipeline(model_id, trt_engine_dir, device = "cuda", dtype = torch.float16):
 

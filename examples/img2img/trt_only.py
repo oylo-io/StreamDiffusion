@@ -17,10 +17,20 @@ from diffusers.models.modeling_utils import ModelMixin
 
 
 class TensorRTVAEWrapper(ModelMixin):
-    def __init__(self, trt_vae_engine):
+    def __init__(self, trt_vae_engine, dtype=torch.float16):
         super().__init__()
         self.trt_vae_engine = trt_vae_engine
-        self.config = FrozenDict({'in_channels': 3, 'out_channels': 3, 'encoder_block_out_channels': [64, 64, 64, 64], 'decoder_block_out_channels': [64, 64, 64, 64], 'act_fn': 'relu', 'upsample_fn': 'nearest', 'latent_channels': 4, 'upsampling_scaling_factor': 2, 'num_encoder_blocks': [1, 3, 3, 3], 'num_decoder_blocks': [3, 3, 3, 1], 'latent_magnitude': 3, 'latent_shift': 0.5, 'force_upcast': False, 'scaling_factor': 1.0, 'shift_factor': 0.0, 'block_out_channels': [64, 64, 64, 64], '_class_name': 'AutoencoderTiny', '_diffusers_version': '0.30.0', '_name_or_path': 'madebyollin/taesd'})
+
+        self._dtype = dtype
+        self._config = FrozenDict({'in_channels': 3, 'out_channels': 3, 'encoder_block_out_channels': [64, 64, 64, 64], 'decoder_block_out_channels': [64, 64, 64, 64], 'act_fn': 'relu', 'upsample_fn': 'nearest', 'latent_channels': 4, 'upsampling_scaling_factor': 2, 'num_encoder_blocks': [1, 3, 3, 3], 'num_decoder_blocks': [3, 3, 3, 1], 'latent_magnitude': 3, 'latent_shift': 0.5, 'force_upcast': False, 'scaling_factor': 1.0, 'shift_factor': 0.0, 'block_out_channels': [64, 64, 64, 64], '_class_name': 'AutoencoderTiny', '_diffusers_version': '0.30.0', '_name_or_path': 'madebyollin/taesd'})
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def config(self):
+        return self._config
 
     def encode(self, *args, **kwargs):
         # Call the encoding part of your TensorRT VAE engine
@@ -31,10 +41,20 @@ class TensorRTVAEWrapper(ModelMixin):
         return self.trt_vae_engine.decode(*args, **kwargs)
 
 class TensorRTUNetWrapper(ModelMixin):
-    def __init__(self, trt_unet_engine):
+    def __init__(self, trt_unet_engine, dtype=torch.float16):
         super().__init__()
         self.trt_unet_engine = trt_unet_engine
-        self.config = FrozenDict({'sample_size': 64, 'in_channels': 4, 'out_channels': 4, 'center_input_sample': False, 'flip_sin_to_cos': True, 'freq_shift': 0, 'down_block_types': ['CrossAttnDownBlock2D', 'CrossAttnDownBlock2D', 'CrossAttnDownBlock2D', 'DownBlock2D'], 'mid_block_type': 'UNetMidBlock2DCrossAttn', 'up_block_types': ['UpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D'], 'only_cross_attention': False, 'block_out_channels': [320, 640, 1280, 1280], 'layers_per_block': 2, 'downsample_padding': 1, 'mid_block_scale_factor': 1, 'dropout': 0.0, 'act_fn': 'silu', 'norm_num_groups': 32, 'norm_eps': 1e-05, 'cross_attention_dim': 1024, 'transformer_layers_per_block': 1, 'reverse_transformer_layers_per_block': None, 'encoder_hid_dim': None, 'encoder_hid_dim_type': None, 'attention_head_dim': [5, 10, 20, 20], 'num_attention_heads': None, 'dual_cross_attention': False, 'use_linear_projection': True, 'class_embed_type': None, 'addition_embed_type': None, 'addition_time_embed_dim': None, 'num_class_embeds': None, 'upcast_attention': None, 'resnet_time_scale_shift': 'default', 'resnet_skip_time_act': False, 'resnet_out_scale_factor': 1.0, 'time_embedding_type': 'positional', 'time_embedding_dim': None, 'time_embedding_act_fn': None, 'timestep_post_act': None, 'time_cond_proj_dim': None, 'conv_in_kernel': 3, 'conv_out_kernel': 3, 'projection_class_embeddings_input_dim': None, 'attention_type': 'default', 'class_embeddings_concat': False, 'mid_block_only_cross_attention': None, 'cross_attention_norm': None, 'addition_embed_type_num_heads': 64, '_class_name': 'UNet2DConditionModel', '_diffusers_version': '0.24.0.dev0', '_name_or_path': '/Users/himmelroman/.cache/huggingface/hub/models--stabilityai--sd-turbo/snapshots/b261bac6fd2cf515557d5d0707481eafa0485ec2/unet'})
+
+        self._dtype = dtype
+        self._config = FrozenDict({'sample_size': 64, 'in_channels': 4, 'out_channels': 4, 'center_input_sample': False, 'flip_sin_to_cos': True, 'freq_shift': 0, 'down_block_types': ['CrossAttnDownBlock2D', 'CrossAttnDownBlock2D', 'CrossAttnDownBlock2D', 'DownBlock2D'], 'mid_block_type': 'UNetMidBlock2DCrossAttn', 'up_block_types': ['UpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D', 'CrossAttnUpBlock2D'], 'only_cross_attention': False, 'block_out_channels': [320, 640, 1280, 1280], 'layers_per_block': 2, 'downsample_padding': 1, 'mid_block_scale_factor': 1, 'dropout': 0.0, 'act_fn': 'silu', 'norm_num_groups': 32, 'norm_eps': 1e-05, 'cross_attention_dim': 1024, 'transformer_layers_per_block': 1, 'reverse_transformer_layers_per_block': None, 'encoder_hid_dim': None, 'encoder_hid_dim_type': None, 'attention_head_dim': [5, 10, 20, 20], 'num_attention_heads': None, 'dual_cross_attention': False, 'use_linear_projection': True, 'class_embed_type': None, 'addition_embed_type': None, 'addition_time_embed_dim': None, 'num_class_embeds': None, 'upcast_attention': None, 'resnet_time_scale_shift': 'default', 'resnet_skip_time_act': False, 'resnet_out_scale_factor': 1.0, 'time_embedding_type': 'positional', 'time_embedding_dim': None, 'time_embedding_act_fn': None, 'timestep_post_act': None, 'time_cond_proj_dim': None, 'conv_in_kernel': 3, 'conv_out_kernel': 3, 'projection_class_embeddings_input_dim': None, 'attention_type': 'default', 'class_embeddings_concat': False, 'mid_block_only_cross_attention': None, 'cross_attention_norm': None, 'addition_embed_type_num_heads': 64, '_class_name': 'UNet2DConditionModel', '_diffusers_version': '0.24.0.dev0', '_name_or_path': '/Users/himmelroman/.cache/huggingface/hub/models--stabilityai--sd-turbo/snapshots/b261bac6fd2cf515557d5d0707481eafa0485ec2/unet'})
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def config(self):
+        return self._config
 
     def forward(self, *args, **kwargs):
         # Call your TensorRT UNet engine's forward method here

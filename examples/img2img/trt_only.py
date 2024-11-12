@@ -32,6 +32,10 @@ class TensorRTVAEWrapper(ModelMixin):
     def config(self):
         return self._config
 
+    @property
+    def device(self):
+        return "cuda"
+
     def encode(self, *args, **kwargs):
         # Call the encoding part of your TensorRT VAE engine
         return self.trt_vae_engine.encode(*args, **kwargs)
@@ -55,6 +59,10 @@ class TensorRTUNetWrapper(ModelMixin):
     @property
     def config(self):
         return self._config
+
+    @property
+    def device(self):
+        return "cuda"
 
     def forward(self, *args, **kwargs):
         # Call your TensorRT UNet engine's forward method here

@@ -228,7 +228,7 @@ def load_trt_pipeline(
     )
 
     # create SD pipeline
-    pipe = StableDiffusionPipeline.from_pretrained(
+    pipe = CachedEmbeddingPipeline.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
         vae=TensorRTVAEWrapper(trt_vae),

@@ -493,6 +493,7 @@ class StreamDiffusion:
         self.timer_event.synchronize()
         inference_time = start.elapsed_time(end) / 1000
         self.inference_time_ema = 0.9 * self.inference_time_ema + 0.1 * inference_time
+
         return x_output
 
     @torch.no_grad()

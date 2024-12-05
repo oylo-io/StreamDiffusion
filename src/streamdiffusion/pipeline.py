@@ -397,15 +397,18 @@ class StreamDiffusion:
 
         return denoised_batch, model_pred
 
-    def encode_image(self, image_tensors: torch.Tensor) -> torch.Tensor:
+    def encode_image(self, image_tensors: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
         image_tensors = image_tensors.to(
             device=self.device,
             dtype=self.vae.dtype,
         )
         img_latent = retrieve_latents(self.vae.encode(image_tensors), self.generator)
         img_latent = img_latent * self.vae.config.scaling_factor
-        x_t_latent = self.add_noise(img_latent, self.init_noise[0], 0)
-        return x_t_latent
+
+        if add_init_noise:
+            img_latent = self.add_noise(img_latent, self.init_noise[0], 0)
+
+        return img_latent
 
     def decode_image(self, x_0_pred_out: torch.Tensor) -> torch.Tensor:
         output_latent = self.vae.decode(
@@ -465,28 +468,43 @@ class StreamDiffusion:
 
     @torch.no_grad()
     def __call__(
-        self, x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None
+        self,
+        x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
+        decode_output: bool = True
     ) -> torch.Tensor:
+
         start = self.timer_event.Event(enable_timing=True)
         end = self.timer_event.Event(enable_timing=True)
         start.record()
-        if x is not None:
-            x = self.image_processor.preprocess(x, self.height, self.width).to(
-                device=self.device, dtype=self.dtype
-            )
-            if self.similar_image_filter:
-                x = self.similar_filter(x)
-                if x is None:
-                    time.sleep(self.inference_time_ema)
-                    return self.prev_image_result
-            x_t_latent = self.encode_image(x)
-        else:
-            # TODO: check the dimension of x_t_latent
-            x_t_latent = torch.randn((1, 4, self.latent_height, self.latent_width)).to(
-                device=self.device, dtype=self.dtype
-            )
+
+        # pre process
+        x = self.image_processor.preprocess(x, self.height, self.width).to(
+            device=self.device, dtype=self.dtype
+        )
+
+        # similarity filter
+        if self.similar_image_filter:
+            x = self.similar_filter(x)
+            if x is None:
+                time.sleep(self.inference_time_ema)
+                return self.prev_image_result
+
+        # encode with VAE
+        x_t_latent = self.encode_image(x)
+
+        # diffusion
         x_0_pred_out = self.predict_x0_batch(x_t_latent)
-        x_output = self.decode_image(x_0_pred_out).detach().clone()
+
+        # check if output should be decoded
+        if decode_output:
+
+            # decode with VAE
+            x_output = self.decode_image(x_0_pred_out).detach().clone()
+
+        else:
+
+            # detach tensor without decoding
+            x_output = x_0_pred_out.detach().clone()
 
         self.prev_image_result = x_output
         end.record()
@@ -522,3 +540,49 @@ class StreamDiffusion:
             x_t_latent - self.beta_prod_t_sqrt * model_pred
         ) / self.alpha_prod_t_sqrt
         return self.decode_image(x_0_pred_out)
+
+    @staticmethod
+    def slerp(v1, v2, t, DOT_THR=0.9995, zdim=-1):
+        """SLERP for pytorch tensors interpolating `v1` to `v2` with scale of `t`.
+
+        `DOT_THR` determines when the vectors are too close to parallel.
+            If they are too close, then a regular linear interpolation is used.
+
+        `zdim` is the feature dimension over which to compute norms and find angles.
+            For example: if a sequence of 5 vectors is input with shape [5, 768]
+            Then `zdim = 1` or `zdim = -1` computes SLERP along the feature dim of 768.
+
+        Theory Reference:
+        https://splines.readthedocs.io/en/latest/rotation/slerp.html
+        PyTorch reference:
+        https://discuss.pytorch.org/t/help-regarding-slerp-function-for-generative-model-sampling/32475/3
+        Numpy reference:
+        https://gist.github.com/dvschultz/3af50c40df002da3b751efab1daddf2c
+        """
+
+        # take the dot product between normalized vectors
+        v1_norm = v1 / torch.norm(v1, dim=zdim, keepdim=True)
+        v2_norm = v2 / torch.norm(v2, dim=zdim, keepdim=True)
+        dot = (v1_norm * v2_norm).sum(zdim)
+
+        # if the vectors are too close, return a simple linear interpolation
+        if (torch.abs(dot) > DOT_THR).any():
+            print(f'warning: v1 and v2 close to parallel, using linear interpolation instead.')
+            res = (1 - t) * v1 + t * v2
+
+        # else apply SLERP
+        else:
+            # compute the angle terms we need
+            theta = torch.acos(dot)
+            theta_t = theta * t
+            sin_theta = torch.sin(theta)
+            sin_theta_t = torch.sin(theta_t)
+
+            # compute the sine scaling terms for the vectors
+            s1 = torch.sin(theta - theta_t) / sin_theta
+            s2 = sin_theta_t / sin_theta
+
+            # interpolate the vectors
+            res = (s1.unsqueeze(zdim) * v1) + (s2.unsqueeze(zdim) * v2)
+
+        return res

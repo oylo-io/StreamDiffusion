@@ -504,7 +504,7 @@ class StreamDiffusion:
         else:
 
             # detach tensor without decoding
-            x_output = x_0_pred_out.detach().clone()
+            x_output = x_0_pred_out
 
         self.prev_image_result = x_output
         end.record()

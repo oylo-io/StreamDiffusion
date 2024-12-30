@@ -4,10 +4,10 @@ from pathlib import Path
 import traceback
 from typing import List, Literal, Optional, Union, Dict
 
-import numpy as np
 import torch
-from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
+import numpy as np
 from PIL import Image
+from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.image_utils import postprocess_image
@@ -107,7 +107,6 @@ class StreamDiffusionWrapper:
         use_denoising_batch : bool, optional
             Whether to use denoising batch or not, by default True.
         cfg_type : Literal["none", "full", "self", "initialize"],
-        optional
             The cfg_type for img2img mode, by default "self".
             You cannot use anything other than "none" for txt2img mode.
         seed : int, optional
@@ -412,7 +411,6 @@ class StreamDiffusionWrapper:
         use_tiny_vae : bool, optional
             Whether to use TinyVAE or not, by default True.
         cfg_type : Literal["none", "full", "self", "initialize"],
-        optional
             The cfg_type for img2img mode, by default "self".
             You cannot use anything other than "none" for txt2img mode.
         seed : int, optional

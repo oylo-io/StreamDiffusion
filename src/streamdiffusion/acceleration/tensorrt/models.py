@@ -17,8 +17,8 @@
 # limitations under the License.
 #
 
-import onnx_graphsurgeon as gs
 import torch
+import onnx_graphsurgeon as gs
 from onnx import shape_inference
 from polygraphy.backend.onnx.loader import fold_constants
 
@@ -71,8 +71,8 @@ class BaseModel:
         verbose=True,
         max_batch_size=16,
         min_batch_size=1,
-        embedding_dim=768,
-        text_maxlen=77,
+        embedding_dim=None,
+        text_maxlen=None,
     ):
         self.name = "SD Model"
         self.fp16 = fp16
@@ -81,8 +81,8 @@ class BaseModel:
 
         self.min_batch = min_batch_size
         self.max_batch = max_batch_size
-        self.min_image_shape = 256  # min image resolution: 256x256
-        self.max_image_shape = 1024  # max image resolution: 1024x1024
+        self.min_image_shape = 256      # min image resolution: 256x256
+        self.max_image_shape = 1024     # max image resolution: 1024x1024
         self.min_latent_shape = self.min_image_shape // 8
         self.max_latent_shape = self.max_image_shape // 8
 
@@ -304,6 +304,110 @@ class UNet(BaseModel):
         )
 
 
+class UNetXLTurbo(BaseModel):
+    def __init__(
+        self,
+        fp16=True,
+        device="mps",
+        max_batch_size=1,
+        min_batch_size=1,
+        encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo
+        text_maxlen=77,                   # Updated for SDXL-Turbo
+        text_embeds_dim=1280,             # SDXL-Turbo-specific
+        time_ids_maxlen=6,                # SDXL-Turbo-specific
+        embedding_dim=768,
+        unet_dim=4
+    ):
+        super(UNetXLTurbo, self).__init__(
+            fp16=fp16,
+            device=device,
+            max_batch_size=max_batch_size,
+            min_batch_size=min_batch_size,
+            embedding_dim=embedding_dim,
+            text_maxlen=text_maxlen,
+        )
+        self.unet_dim = unet_dim
+        self.encoder_hidden_states_dim = encoder_hidden_states_dim
+        self.text_embeds_dim = text_embeds_dim
+        self.time_ids_maxlen = time_ids_maxlen
+        self.name = "UnetXLTurbo"
+
+    def get_input_names(self):
+        return ["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids"]
+
+    def get_output_names(self):
+        return ["latent"]
+
+    def get_dynamic_axes(self):
+        return None  # No dynamic axes for fixed shapes
+
+    def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        (
+            min_batch,
+            max_batch,
+            _,
+            _,
+            _,
+            _,
+            min_latent_height,
+            max_latent_height,
+            min_latent_width,
+            max_latent_width,
+        ) = self.get_minmax_dims(batch_size, image_height, image_width, static_batch, static_shape)
+        return {
+            "sample": [
+                (min_batch, self.unet_dim, min_latent_height, min_latent_width),
+                (batch_size, self.unet_dim, latent_height, latent_width),
+                (max_batch, self.unet_dim, max_latent_height, max_latent_width),
+            ],
+            "timestep": [
+                (min_batch,),
+                (batch_size,),
+                (max_batch,),
+            ],
+            "encoder_hidden_states": [
+                (min_batch, self.text_maxlen, self.encoder_hidden_states_dim),
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+                (max_batch, self.text_maxlen, self.encoder_hidden_states_dim),
+            ],
+            "text_embeds": [
+                (min_batch, self.text_embeds_dim),
+                (batch_size, self.text_embeds_dim),
+                (max_batch, self.text_embeds_dim),
+            ],
+            "time_ids": [
+                (min_batch, self.time_ids_maxlen),
+                (batch_size, self.time_ids_maxlen),
+                (max_batch, self.time_ids_maxlen),
+            ],
+        }
+
+    def get_shape_dict(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        return {
+            "sample": (batch_size, self.unet_dim, latent_height, latent_width),
+            "timestep": (batch_size,),
+            "encoder_hidden_states": (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+            "text_embeds": (batch_size, self.text_embeds_dim),
+            "time_ids": (batch_size, self.time_ids_maxlen),
+            "latent": (batch_size, self.unet_dim, latent_height, latent_width),
+        }
+
+    def get_sample_input(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        dtype = torch.float16 if self.fp16 else torch.float32
+        return (
+            torch.randn(
+                batch_size, self.unet_dim, latent_height, latent_width, dtype=torch.float32, device=self.device
+            ),
+            torch.ones((batch_size,), dtype=torch.float32, device=self.device),
+            torch.randn(batch_size, self.text_maxlen, self.encoder_hidden_states_dim, dtype=dtype, device=self.device),
+            torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device),
+            torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device),
+        )
+
+
 class VAE(BaseModel):
     def __init__(self, device, max_batch_size, min_batch_size=1):
         super(VAE, self).__init__(
@@ -432,3 +536,13 @@ class VAEEncoder(BaseModel):
             dtype=torch.float32,
             device=self.device,
         )
+
+
+class UNetXLTurboExportWrapper(torch.nn.Module):
+    def __init__(self, unet_model):
+        super(UNetXLTurboExportWrapper, self).__init__()
+        self.unet = unet_model
+
+    def forward(self, sample, timestep, encoder_hidden_states, text_embeds, add_time_ids):
+        added_cond_kwargs = {"text_embeds": text_embeds, "time_ids": add_time_ids}
+        return self.unet(sample, timestep, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)

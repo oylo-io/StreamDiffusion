@@ -11,7 +11,7 @@ from polygraphy import cuda
 from ...pipeline import StreamDiffusion
 from .builder import EngineBuilder, create_onnx_path
 from .engine import AutoencoderKLEngine, UNet2DConditionModelEngine
-from .models import VAE, BaseModel, UNet, VAEEncoder
+from .models import VAE, BaseModel, UNet, VAEEncoder, UNetXLTurbo
 
 
 class TorchVAEEncoder(torch.nn.Module):
@@ -117,7 +117,8 @@ def accelerate_with_tensorrt(
     vae_encoder_engine_path = f"{engine_dir}/vae_encoder.engine"
     vae_decoder_engine_path = f"{engine_dir}/vae_decoder.engine"
 
-    unet_model = UNet(
+    unet_class = UNetXLTurbo if stream.sdxl else UNet
+    unet_model = unet_class(
         fp16=True,
         device=stream.device,
         max_batch_size=max_batch_size,

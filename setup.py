@@ -45,7 +45,7 @@ install_requires = [
 
 setup(
     name="streamdiffusion",
-    version="0.1.3",
+    version="0.1.31",
     description="real-time interactive image generation pipeline",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",

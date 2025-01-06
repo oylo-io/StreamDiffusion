@@ -463,8 +463,9 @@ def optimize_onnx(
 ):
     onnx_opt_graph = model_data.optimize(onnx.load(onnx_path))
 
-    onnx_opt_graph.opset_import[0].domain = "ai.onnx"
-    onnx_opt_graph.opset_import[0].version = 20
+    opset = onnx_opt_graph.opset_import.add()
+    opset.domain = "ai.onnx"
+    opset.version = 20
 
     onnx.save(onnx_opt_graph, onnx_opt_path)
     del onnx_opt_graph

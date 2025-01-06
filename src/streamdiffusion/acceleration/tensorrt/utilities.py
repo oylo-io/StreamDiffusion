@@ -447,9 +447,6 @@ def export_onnx(
             onnx_path,
             export_params=True,
             opset_version=onnx_opset,
-            do_constant_folding=True,
-            dynamo=True,
-            external_data=True,
             input_names=model_data.get_input_names(),
             output_names=model_data.get_output_names(),
             dynamic_axes=model_data.get_dynamic_axes(),
@@ -465,7 +462,7 @@ def optimize_onnx(
     model_data: BaseModel,
 ):
     onnx_opt_graph = model_data.optimize(onnx.load(onnx_path))
-    onnx.save(onnx_opt_graph, onnx_opt_path, save_as_external_data=True)
+    onnx.save(onnx_opt_graph, onnx_opt_path)
     del onnx_opt_graph
     gc.collect()
     torch.cuda.empty_cache()

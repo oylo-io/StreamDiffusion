@@ -468,6 +468,7 @@ def optimize_onnx(
     opset.version = 20
 
     onnx.save(onnx_opt_graph, onnx_opt_path)
+
     del onnx_opt_graph
     gc.collect()
     torch.cuda.empty_cache()

@@ -537,13 +537,3 @@ class VAEEncoder(BaseModel):
             dtype=torch.float32,
             device=self.device,
         )
-
-
-class UNetXLTurboExportWrapper(torch.nn.Module):
-    def __init__(self, unet_model):
-        super(UNetXLTurboExportWrapper, self).__init__()
-        self.unet = unet_model
-
-    def forward(self, sample, timestep, encoder_hidden_states, text_embeds, add_time_ids):
-        added_cond_kwargs = {"text_embeds": text_embeds, "time_ids": add_time_ids}
-        return self.unet(sample, timestep, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)

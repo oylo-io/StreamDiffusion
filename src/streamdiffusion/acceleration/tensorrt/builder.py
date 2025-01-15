@@ -47,6 +47,9 @@ class EngineBuilder:
         force_onnx_export: bool = False,
         force_onnx_optimize: bool = False,
     ):
+        self.model.min_latent_shape = min_image_resolution // 8
+        self.model.max_latent_shape = max_image_resolution // 8
+
         if not force_onnx_export and os.path.exists(onnx_path):
             print(f"Found cached model: {onnx_path}")
         else:
@@ -72,8 +75,6 @@ class EngineBuilder:
                 onnx_opt_path=onnx_opt_path,
                 model_data=self.model,
             )
-        self.model.min_latent_shape = min_image_resolution // 8
-        self.model.max_latent_shape = max_image_resolution // 8
         if not force_engine_build and os.path.exists(engine_path):
             print(f"Found cached engine: {engine_path}")
         else:

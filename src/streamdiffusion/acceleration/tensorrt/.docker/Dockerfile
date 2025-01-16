@@ -84,7 +84,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/
 # Install StreamDiffusion
 ARG SD_BRANCH=main
 WORKDIR /app
-RUN git clone https://github.com/cumulo-autumn/StreamDiffusion.git
+RUN git clone https://github.com/himmelroman/StreamDiffusion.git
 WORKDIR /app/StreamDiffusion
 RUN pip install --no-cache-dir -e . && \
     pip uninstall -y triton && \

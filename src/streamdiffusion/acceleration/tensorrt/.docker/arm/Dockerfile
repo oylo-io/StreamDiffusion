@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir torch torchvision --extra-index-url https://downl
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 # Install Cuda packages
-pip install --no-cache-dir  \
+RUN pip install --no-cache-dir  \
     nvidia-cuda-runtime-cu12 \
     nvidia-cublas-cu12 \
     nvidia-cudnn-cu12 \

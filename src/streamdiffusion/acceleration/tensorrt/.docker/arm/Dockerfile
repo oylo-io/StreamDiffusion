@@ -19,6 +19,20 @@ RUN pip install --no-cache-dir torch torchvision --extra-index-url https://downl
     pip uninstall -y triton && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
+# Install Cuda packages
+pip install --no-cache-dir  \
+    nvidia-cuda-runtime-cu12 \
+    nvidia-cublas-cu12 \
+    nvidia-cudnn-cu12 \
+    nvidia-cufft-cu12 \
+    nvidia-curand-cu12 \
+    nvidia-cusolver-cu12 \
+    nvidia-cusparse-cu12 \
+    nvidia-nccl-cu12 \
+    nvidia-nvjitlink-cu12 \
+    nvidia-nvtx-cu12 && \
+    rm -rf /root/.cache/pip /tmp/* /var/tmp/*
+
 # Install TensorRT
 RUN pip install --no-cache-dir tensorrt && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
@@ -38,7 +52,7 @@ RUN mkdir -p /opt/layers /opt/layers/python-packages && \
     -exec cp -r {} /opt/layers/python-packages/ \;
 
 # Prepare Nvidia layers
-ENV NVIDIA_PACKAGES="cuda cublas cudnn cufft curand cusolver cusparse nccl nvjitlink nvtx"
+ENV NVIDIA_PACKAGES="cuda_runtime cublas cudnn cufft curand cusolver cusparse nccl nvjitlink nvtx"
 RUN for pkg in ${NVIDIA_PACKAGES}; do \
         mkdir -p /opt/layers/${pkg} &&  \
         mkdir -p /opt/layers/${pkg}/nvidia/${pkg} && \
@@ -70,7 +84,7 @@ COPY --from=builder /opt/layers/python-packages /usr/local/lib/python3.10/dist-p
 COPY --from=builder /opt/layers/torch /usr/local/lib/python3.10/dist-packages
 
 # Copy nvidia layers
-COPY --from=builder /opt/layers/cuda /usr/local/lib/python3.10/dist-packages
+COPY --from=builder /opt/layers/cuda_runtime /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /opt/layers/cublas /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /opt/layers/cudnn /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /opt/layers/cufft /usr/local/lib/python3.10/dist-packages

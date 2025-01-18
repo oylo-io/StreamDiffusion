@@ -3,7 +3,7 @@ FROM node:20-alpine AS frontend
 RUN apk add --no-cache libc6-compat git
 WORKDIR /app
 
-RUN git clone https://github.com/himmelroman/StreamDiffusion .
+RUN git clone https://github.com/oylo-io/StreamDiffusion .
 
 WORKDIR /app/demo/realtime-img2img/frontend
 RUN npm ci
@@ -62,7 +62,7 @@ COPY --from=frontend  --chown=user:user /app .
 WORKDIR $HOME/app/demo/realtime-img2img
 
 RUN pip install --no-cache-dir -U -r requirements.txt
-RUN pip install git+https://github.com/himmelroman/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
+RUN pip install git+https://github.com/oylo-io/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
 RUN python -m streamdiffusion.tools.install-tensorrt
 
 USER user

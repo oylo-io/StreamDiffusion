@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     pip uninstall -y triton && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
-RUN pip install --no-cache-dir git+https://github.com/himmelroman/StreamDiffusion.git@main#egg=streamdiffusion && \
+RUN pip install --no-cache-dir git+https://github.com/oylo-io/StreamDiffusion.git@main#egg=streamdiffusion && \
     pip uninstall -y triton && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 

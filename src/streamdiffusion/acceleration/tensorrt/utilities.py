@@ -447,7 +447,6 @@ def export_onnx(
             onnx_path,
             export_params=True,
             opset_version=onnx_opset,
-            do_constant_folding=True,
             input_names=model_data.get_input_names(),
             output_names=model_data.get_output_names(),
             dynamic_axes=model_data.get_dynamic_axes(),

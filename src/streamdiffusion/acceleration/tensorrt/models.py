@@ -118,8 +118,8 @@ class BaseModel:
         opt.info(self.name + ": cleanup")
         opt.fold_constants()
         opt.info(self.name + ": fold constants")
-        # opt.infer_shapes()
-        # opt.info(self.name + ": shape inference")
+        opt.infer_shapes()
+        opt.info(self.name + ": shape inference")
         onnx_opt_graph = opt.cleanup(return_onnx=True)
         opt.info(self.name + ": finished")
         return onnx_opt_graph

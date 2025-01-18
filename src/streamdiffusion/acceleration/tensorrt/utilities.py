@@ -462,13 +462,7 @@ def optimize_onnx(
     model_data: BaseModel,
 ):
     onnx_opt_graph = model_data.optimize(onnx.load(onnx_path))
-
-    opset = onnx_opt_graph.opset_import.add()
-    opset.domain = "ai.onnx"
-    opset.version = 20
-
     onnx.save(onnx_opt_graph, onnx_opt_path)
-
     del onnx_opt_graph
     gc.collect()
     torch.cuda.empty_cache()

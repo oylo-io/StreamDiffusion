@@ -10,6 +10,7 @@ onnxscript
 onnxruntime-gpu
 onnx_graphsurgeon
 polygraphy
+cuda-python
 
 # misc
 numpy

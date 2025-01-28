@@ -251,7 +251,7 @@ class UNet(BaseModel):
     def get_dynamic_axes(self):
         return {
             "sample": {0: "2B", 2: "H", 3: "W"},
-            "timestep": {0: "2B", 1: "T"},
+            "timestep": {0: "T"},
             "encoder_hidden_states": {0: "2B"},
             "latent": {0: "2B", 2: "H", 3: "W"},
         }

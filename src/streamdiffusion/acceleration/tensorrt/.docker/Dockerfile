@@ -89,3 +89,5 @@ WORKDIR /app/StreamDiffusion
 RUN pip install --no-cache-dir -e . && \
     pip uninstall -y triton && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
+
+ENV PYTHONPATH=/app/StreamDiffusion

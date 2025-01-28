@@ -276,7 +276,7 @@ class UNet(BaseModel):
                 (batch_size, self.unet_dim, latent_height, latent_width),
                 (max_batch, self.unet_dim, max_latent_height, max_latent_width),
             ],
-            "timestep": [(3,), (3,), (3,)],
+            "timestep": [(1,), (2,), (3,)],
             "encoder_hidden_states": [
                 (min_batch, self.text_maxlen, self.embedding_dim),
                 (batch_size, self.text_maxlen, self.embedding_dim),

@@ -303,7 +303,7 @@ class UNet(BaseModel):
         )
 
         # Generate the timestep input, allowing for 1 to 3 timesteps
-        timestep_input = torch.randint(1, 4, (3,), dtype=torch.float32, device=self.device)
+        timestep_input = torch.randint(1, 4, (1,), dtype=torch.float32, device=self.device)
 
         # Generate the encoder hidden states input
         encoder_hidden_states_input = torch.randn(

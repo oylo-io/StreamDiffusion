@@ -502,8 +502,6 @@ class VAEEncoder(BaseModel):
 
     def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
         assert batch_size >= self.min_batch and batch_size <= self.max_batch
-        min_batch = batch_size if static_batch else self.min_batch
-        max_batch = batch_size if static_batch else self.max_batch
         self.check_dims(batch_size, image_height, image_width)
         (
             min_batch,

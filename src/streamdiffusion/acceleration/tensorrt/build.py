@@ -42,7 +42,7 @@ def accelerate_pipeline(model_id, vae_id, height, width, export_dir):
             'opt_image_width': width,
             'min_image_resolution': min(height, width),
             'max_image_resolution': max(height, width),
-            'build_static_batch': True,
+            # 'build_static_batch': True,
             'build_dynamic_shape': False
         }
     )

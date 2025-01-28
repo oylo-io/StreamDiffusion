@@ -251,7 +251,7 @@ class UNet(BaseModel):
     def get_dynamic_axes(self):
         return {
             "sample": {0: "2B", 2: "H", 3: "W"},
-            "timestep": {0: "2B"},
+            "timestep": {0: "2B", 1: "T"},
             "encoder_hidden_states": {0: "2B"},
             "latent": {0: "2B", 2: "H", 3: "W"},
         }
@@ -276,7 +276,7 @@ class UNet(BaseModel):
                 (batch_size, self.unet_dim, latent_height, latent_width),
                 (max_batch, self.unet_dim, max_latent_height, max_latent_width),
             ],
-            "timestep": [(min_batch,), (batch_size,), (max_batch,)],
+            "timestep": [(1,), (2,), (3,)],
             "encoder_hidden_states": [
                 (min_batch, self.text_maxlen, self.embedding_dim),
                 (batch_size, self.text_maxlen, self.embedding_dim),
@@ -288,7 +288,7 @@ class UNet(BaseModel):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
         return {
             "sample": (2 * batch_size, self.unet_dim, latent_height, latent_width),
-            "timestep": (2 * batch_size,),
+            "timestep": (1, 3),
             "encoder_hidden_states": (2 * batch_size, self.text_maxlen, self.embedding_dim),
             "latent": (2 * batch_size, 4, latent_height, latent_width),
         }
@@ -296,13 +296,21 @@ class UNet(BaseModel):
     def get_sample_input(self, batch_size, image_height, image_width):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
         dtype = torch.float16 if self.fp16 else torch.float32
-        return (
-            torch.randn(
-                2 * batch_size, self.unet_dim, latent_height, latent_width, dtype=torch.float32, device=self.device
-            ),
-            torch.ones((2 * batch_size,), dtype=torch.float32, device=self.device),
-            torch.randn(2 * batch_size, self.text_maxlen, self.embedding_dim, dtype=dtype, device=self.device),
+
+        # Generate the sample input
+        sample_input = torch.randn(
+            2 * batch_size, self.unet_dim, latent_height, latent_width, dtype=dtype, device=self.device
         )
+
+        # Generate the timestep input, allowing for 1 to 3 timesteps
+        timestep_input = torch.randint(1, 4, (1, 3), dtype=torch.float32, device=self.device)
+
+        # Generate the encoder hidden states input
+        encoder_hidden_states_input = torch.randn(
+            2 * batch_size, self.text_maxlen, self.embedding_dim, dtype=dtype, device=self.device
+        )
+
+        return sample_input, timestep_input, encoder_hidden_states_input
 
 
 class UNetXLTurbo(BaseModel):
@@ -363,9 +371,7 @@ class UNetXLTurbo(BaseModel):
                 (max_batch, self.unet_dim, max_latent_height, max_latent_width),
             ],
             "timestep": [
-                (min_batch,),
-                (batch_size,),
-                (max_batch,),
+                (1,), (2,), (3,)
             ],
             "encoder_hidden_states": [
                 (min_batch, self.text_maxlen, self.encoder_hidden_states_dim),
@@ -388,7 +394,7 @@ class UNetXLTurbo(BaseModel):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
         return {
             "sample": (batch_size, self.unet_dim, latent_height, latent_width),
-            "timestep": (batch_size,),
+            "timestep": (1, 3),
             "encoder_hidden_states": (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
             "text_embeds": (batch_size, self.text_embeds_dim),
             "time_ids": (batch_size, self.time_ids_maxlen),
@@ -402,7 +408,7 @@ class UNetXLTurbo(BaseModel):
             torch.randn(
                 batch_size, self.unet_dim, latent_height, latent_width, dtype=torch.float32, device=self.device
             ),
-            torch.ones((batch_size,), dtype=torch.float32, device=self.device),
+            torch.randint(1, 4, (1, 3), dtype=torch.float32, device=self.device),
             torch.randn(batch_size, self.text_maxlen, self.encoder_hidden_states_dim, dtype=dtype, device=self.device),
             torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device),
             torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device),

@@ -8,7 +8,7 @@ from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
 
 
-def accelerate_pipeline(model_id, vae_id, height, width, export_dir):
+def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_dir):
 
     # load vae
     vae = AutoencoderTiny.from_pretrained(vae_id)
@@ -23,11 +23,14 @@ def accelerate_pipeline(model_id, vae_id, height, width, export_dir):
     # StreamDiffusion
     stream = StreamDiffusion(
         pipe,
-        t_index_list=[33],
+        t_index_list=timestep_list,
         torch_dtype=torch.float16,
         height=height,
         width=width
     )
+
+    # Calculate batch size from timesteps
+    batch_size = len(timestep_list)
 
     # build models
     accelerate_with_tensorrt(
@@ -37,12 +40,12 @@ def accelerate_pipeline(model_id, vae_id, height, width, export_dir):
         min_batch_size=1,
         use_cuda_graph=False,
         engine_build_options={
-            'opt_batch_size': 1,
             'opt_image_height': height,
             'opt_image_width': width,
             'min_image_resolution': min(height, width),
             'max_image_resolution': max(height, width),
-            # 'build_static_batch': True,
+            'opt_batch_size': batch_size,
+            'build_static_batch': True,
             'build_dynamic_shape': False
         }
     )
@@ -51,11 +54,20 @@ def accelerate_pipeline(model_id, vae_id, height, width, export_dir):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Accelerate Pipeline with TRT")
-    parser.add_argument('--model_id', type=str, default='stabilityai/sd-turbo')
-    parser.add_argument('--vae_id', type=str, default='madebyollin/taesd')
-    parser.add_argument('--export_dir', type=Path, required=True, help='Directory for generated models')
-    parser.add_argument('--height', type=int, required=True, help='image height')
-    parser.add_argument('--width', type=int, required=True, help='image width')
+    parser.add_argument('--model_id', '-m',
+                        type=str, default='stabilityai/sd-turbo')
+    parser.add_argument('--vae_id', '-v',
+                        type=str, default='madebyollin/taesd')
+    parser.add_argument('--export_dir', '-out',
+                        type=Path, required=True, help='Directory for generated models')
+    parser.add_argument('--height', '-h',
+                        type=int, required=True, help='image height')
+    parser.add_argument('--width', '-w',
+                        type=int, required=True, help='image width')
+    parser.add_argument('--timestep_list', '-t',
+                        type=int, nargs='+', default=[33],
+                        help='List of timestep indices for denoising')
+
     args = parser.parse_args()
 
     accelerate_pipeline(
@@ -63,5 +75,6 @@ if __name__ == "__main__":
         args.vae_id,
         args.height,
         args.width,
+        args.timestep_list,
         args.export_dir
     )

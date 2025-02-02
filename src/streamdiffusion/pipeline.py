@@ -514,6 +514,7 @@ class StreamDiffusion:
     def __call__(
         self,
         x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
+        encode_input: bool = True,
         decode_output: bool = True
     ) -> torch.Tensor:
 
@@ -533,8 +534,13 @@ class StreamDiffusion:
                 time.sleep(self.inference_time_ema)
                 return self.prev_image_result
 
-        # encode with VAE
-        x_t_latent = self.encode_image(x)
+        # check if input should be encoded
+        if encode_input:
+
+            # encode with VAE
+            x_t_latent = self.encode_image(x)
+        else:
+            x_t_latent = x
 
         # diffusion
         x_0_pred_out = self.predict_x0_batch(x_t_latent)
@@ -544,10 +550,7 @@ class StreamDiffusion:
 
             # decode with VAE
             x_output = self.decode_image(x_0_pred_out).detach().clone()
-
         else:
-
-            # detach tensor without decoding
             x_output = x_0_pred_out
 
         self.prev_image_result = x_output

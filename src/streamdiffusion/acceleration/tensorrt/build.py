@@ -78,3 +78,7 @@ if __name__ == "__main__":
         args.timestep_list,
         args.export_dir
     )
+
+# Usage:
+# docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
+#

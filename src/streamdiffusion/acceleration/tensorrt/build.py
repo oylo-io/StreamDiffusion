@@ -36,8 +36,8 @@ def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_d
     accelerate_with_tensorrt(
         stream,
         str(export_dir),
-        max_batch_size=1,
-        min_batch_size=1,
+        min_batch_size=batch_size,
+        max_batch_size=batch_size,
         use_cuda_graph=False,
         engine_build_options={
             'opt_image_height': height,
@@ -81,4 +81,4 @@ if __name__ == "__main__":
 
 # Usage:
 # docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py
+# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --timestep_list 32 45 --export_dir /root/app/engines/ENGINE_NAME

@@ -84,6 +84,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/
 # Install StreamDiffusion
 ARG SD_BRANCH=main
 WORKDIR /app
+ADD "https://api.github.com/repos/oylo-io/StreamDiffusion/commits?sha=${SD_BRANCH}&per_page=1" sd_commit
 RUN git clone -b ${SD_BRANCH} https://github.com/oylo-io/StreamDiffusion.git
 WORKDIR /app/StreamDiffusion
 RUN pip install --no-cache-dir -e . && \

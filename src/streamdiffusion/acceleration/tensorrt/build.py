@@ -29,22 +29,31 @@ def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_d
         width=width
     )
 
-    # Calculate batch size from timesteps
-    batch_size = len(timestep_list)
+    # Set batch sizes
+    vae_batch_size = 1
+    unet_batch_size = len(timestep_list)
 
     # build models
     accelerate_with_tensorrt(
-        stream,
-        str(export_dir),
-        min_batch_size=batch_size,
-        max_batch_size=batch_size,
-        use_cuda_graph=False,
-        engine_build_options={
+        stream=stream,
+        engine_dir=str(export_dir),
+        unet_batch_size=(unet_batch_size, unet_batch_size),
+        vae_batch_size=(vae_batch_size, vae_batch_size),
+        unet_engine_build_options={
             'opt_image_height': height,
             'opt_image_width': width,
             'min_image_resolution': min(height, width),
             'max_image_resolution': max(height, width),
-            'opt_batch_size': batch_size,
+            'opt_batch_size': unet_batch_size,
+            'build_static_batch': True,
+            'build_dynamic_shape': False
+        },
+        vae_engine_build_options={
+            'opt_image_height': height,
+            'opt_image_width': width,
+            'min_image_resolution': min(height, width),
+            'max_image_resolution': max(height, width),
+            'opt_batch_size': vae_batch_size,
             'build_static_batch': True,
             'build_dynamic_shape': False
         }

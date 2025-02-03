@@ -125,7 +125,7 @@ class BaseModel:
         return onnx_opt_graph
 
     def check_dims(self, batch_size, image_height, image_width):
-        assert batch_size >= self.min_batch and batch_size <= self.max_batch
+        assert self.min_batch <= batch_size <= self.max_batch, f"Invalid batch_size: {self.min_batch=} <= {batch_size=} <= {self.max_batch=}"
         assert image_height % 8 == 0 or image_width % 8 == 0
         latent_height = image_height // 8
         latent_width = image_width // 8

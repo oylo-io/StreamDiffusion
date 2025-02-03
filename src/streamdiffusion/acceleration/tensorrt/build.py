@@ -81,4 +81,4 @@ if __name__ == "__main__":
 
 # Usage:
 # docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --timestep_list 32 45 --export_dir /root/app/engines/ENGINE_NAME
+# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --timestep_list 32 45 --export_dir /root/app/engines/sd-turbo_b2

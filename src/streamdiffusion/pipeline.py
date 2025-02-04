@@ -156,7 +156,7 @@ class StreamDiffusion:
         num_inference_steps: int = 50,
         guidance_scale: float = 1.2,
         delta: float = 1.0,
-        strength: float = 1.5,
+        strength: float = 1.0,
         generator: Optional[torch.Generator] = torch.Generator(),
         seed: int = 2,
     ) -> None:

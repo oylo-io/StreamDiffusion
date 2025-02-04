@@ -50,8 +50,10 @@ def compile_vae_decoder(
     onnx_opt_path: str,
     engine_path: str,
     opt_batch_size: int = 1,
-    engine_build_options: dict = {},
+        engine_build_options=None,
 ):
+    if engine_build_options is None:
+        engine_build_options = {}
     vae = vae.to(torch.device("cuda"))
     builder = EngineBuilder(model_data, vae, device=torch.device("cuda"))
     opt_batch_size = engine_build_options.pop('opt_batch_size', opt_batch_size)
@@ -71,8 +73,10 @@ def compile_unet(
     onnx_opt_path: str,
     engine_path: str,
     opt_batch_size: int = 1,
-    engine_build_options: dict = {},
+        engine_build_options=None,
 ):
+    if engine_build_options is None:
+        engine_build_options = {}
     unet = unet.to(torch.device("cuda"), dtype=torch.float16)
     builder = EngineBuilder(model_data, unet, device=torch.device("cuda"))
     opt_batch_size = engine_build_options.pop('opt_batch_size', opt_batch_size)
@@ -88,13 +92,25 @@ def compile_unet(
 def accelerate_with_tensorrt(
     stream: StreamDiffusion,
     engine_dir: str,
-    max_batch_size: int = 2,
-    min_batch_size: int = 1,
+    unet_batch_size: tuple = (1, 2),
+    vae_batch_size: tuple = (1, 1),
+    unet_engine_build_options=None,
+    vae_engine_build_options=None,
     use_cuda_graph: bool = False,
-    engine_build_options: dict = {},
 ):
-    if "opt_batch_size" not in engine_build_options or engine_build_options["opt_batch_size"] is None:
-        engine_build_options["opt_batch_size"] = max_batch_size
+    # argument default values should not be mutable
+    if vae_engine_build_options is None:
+        vae_engine_build_options = {}
+    if unet_engine_build_options is None:
+        unet_engine_build_options = {}
+
+    # fix opt_batch_size
+    if unet_engine_build_options.get("opt_batch_size", None) is None:
+        unet_engine_build_options["opt_batch_size"] = unet_batch_size[1]
+    if vae_engine_build_options.get("opt_batch_size", None) is None:
+        vae_engine_build_options["opt_batch_size"] = vae_batch_size[1]
+
+    # take refs of models from pipeline
     text_encoder = stream.text_encoder
     unet = stream.unet
     vae = stream.vae
@@ -121,20 +137,20 @@ def accelerate_with_tensorrt(
     unet_model = unet_class(
         fp16=True,
         device=stream.device,
-        max_batch_size=max_batch_size,
-        min_batch_size=min_batch_size,
+        min_batch_size=unet_batch_size[0],
+        max_batch_size=unet_batch_size[1],
         embedding_dim=text_encoder.config.hidden_size,
         unet_dim=unet.config.in_channels,
     )
     vae_decoder_model = VAE(
         device=stream.device,
-        max_batch_size=max_batch_size,
-        min_batch_size=min_batch_size,
+        min_batch_size=vae_batch_size[0],
+        max_batch_size=vae_batch_size[1]
     )
     vae_encoder_model = VAEEncoder(
         device=stream.device,
-        max_batch_size=max_batch_size,
-        min_batch_size=min_batch_size,
+        min_batch_size=vae_batch_size[0],
+        max_batch_size=vae_batch_size[1]
     )
 
     if not os.path.exists(unet_engine_path):
@@ -144,7 +160,7 @@ def accelerate_with_tensorrt(
             create_onnx_path("unet", onnx_dir, opt=False),
             create_onnx_path("unet", onnx_dir, opt=True),
             unet_engine_path,
-            engine_build_options=engine_build_options
+            engine_build_options=unet_engine_build_options
         )
     else:
         del unet
@@ -157,7 +173,7 @@ def accelerate_with_tensorrt(
             create_onnx_path("vae_decoder", onnx_dir, opt=False),
             create_onnx_path("vae_decoder", onnx_dir, opt=True),
             vae_decoder_engine_path,
-            engine_build_options=engine_build_options
+            engine_build_options=vae_engine_build_options
         )
 
     if not os.path.exists(vae_encoder_engine_path):
@@ -168,7 +184,7 @@ def accelerate_with_tensorrt(
             create_onnx_path("vae_encoder", onnx_dir, opt=False),
             create_onnx_path("vae_encoder", onnx_dir, opt=True),
             vae_encoder_engine_path,
-            engine_build_options=engine_build_options
+            engine_build_options=vae_engine_build_options
         )
 
     del vae

@@ -27,7 +27,8 @@ class StreamDiffusion:
         frame_buffer_size: int = 1,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         device: Optional[str] = None,
-        vae_scale_factor: Optional[int] = 8
+        vae_scale_factor: Optional[int] = 8,
+        original_inference_steps: Optional[int] = 50
     ) -> None:
 
         # optional arguments
@@ -88,6 +89,9 @@ class StreamDiffusion:
             self.vae = pipe.vae
             self.unet = pipe.unet
             self.text_encoder = pipe.text_encoder
+
+            # scheduler
+            self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
             self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
 
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline

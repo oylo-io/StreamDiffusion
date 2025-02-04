@@ -8,7 +8,7 @@ from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
 
 
-def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_dir):
+def accelerate_pipeline(model_id, vae_id, height, width, num_timesteps, export_dir):
 
     # load vae
     vae = AutoencoderTiny.from_pretrained(vae_id)
@@ -23,7 +23,7 @@ def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_d
     # StreamDiffusion
     stream = StreamDiffusion(
         pipe,
-        t_index_list=timestep_list,
+        t_index_list=list(range(num_timesteps)),
         torch_dtype=torch.float16,
         height=height,
         width=width
@@ -31,7 +31,7 @@ def accelerate_pipeline(model_id, vae_id, height, width, timestep_list, export_d
 
     # Set batch sizes
     vae_batch_size = 1
-    unet_batch_size = len(timestep_list)
+    unet_batch_size = num_timesteps
 
     # build models
     accelerate_with_tensorrt(
@@ -73,9 +73,8 @@ if __name__ == "__main__":
                         type=int, required=True, help='image height')
     parser.add_argument('--width',
                         type=int, required=True, help='image width')
-    parser.add_argument('--timestep_list',
-                        type=int, nargs='+', default=[33],
-                        help='List of timestep indices for denoising')
+    parser.add_argument('--num_timesteps',
+                        type=int, default=10, help='number of timesteps')
 
     args = parser.parse_args()
 
@@ -84,10 +83,10 @@ if __name__ == "__main__":
         args.vae_id,
         args.height,
         args.width,
-        args.timestep_list,
+        args.num_timesteps,
         args.export_dir
     )
 
 # Usage:
 # docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --timestep_list 32 45 --export_dir /root/app/engines/sd-turbo_b2
+# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --num_timesteps 2 --export_dir /root/app/engines/sd-turbo_b2

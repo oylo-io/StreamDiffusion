@@ -352,7 +352,12 @@ class UNetXLTurbo(BaseModel):
         return ["latent"]
 
     def get_dynamic_axes(self):
-        return None  # No dynamic axes for fixed shapes
+        return {
+            "sample": {0: "B", 2: "H", 3: "W"},
+            "timestep": {0: "T"},
+            "encoder_hidden_states": {0: "B"},
+            "latent": {0: "B", 2: "H", 3: "W"},
+        }
 
     def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
         latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
@@ -375,7 +380,9 @@ class UNetXLTurbo(BaseModel):
                 (max_batch, self.unet_dim, max_latent_height, max_latent_width),
             ],
             "timestep": [
-                (1,), (2,), (3,)
+                (min_batch,),
+                (batch_size,),
+                (max_batch,)
             ],
             "encoder_hidden_states": [
                 (min_batch, self.text_maxlen, self.encoder_hidden_states_dim),
@@ -412,7 +419,7 @@ class UNetXLTurbo(BaseModel):
             torch.randn(
                 batch_size, self.unet_dim, latent_height, latent_width, dtype=torch.float32, device=self.device
             ),
-            torch.randint(1, 4, (1, 3), dtype=torch.float32, device=self.device),
+            torch.randint(1, 4, (1,), dtype=torch.float32, device=self.device),
             torch.randn(batch_size, self.text_maxlen, self.encoder_hidden_states_dim, dtype=dtype, device=self.device),
             torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device),
             torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device),

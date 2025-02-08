@@ -50,6 +50,8 @@ class StreamDiffusion:
         self.denoising_steps_num = len(t_index_list)
 
         self.cfg_type = cfg_type
+        self.alpha_prod_t_sqrt = None
+        self.beta_prod_t_sqrt = None
 
         if use_denoising_batch:
             self.batch_size = self.denoising_steps_num * frame_buffer_size
@@ -278,7 +280,7 @@ class StreamDiffusion:
 
         # build weighted embeddings for prompt
         encoder_output = self.compel.build_weighted_embedding(prompt)
-        self.prompt_embeds = encoder_output[0].repeat(self.batch_size, 1, 1)
+        self.prompt_embeds = encoder_output[0].to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
 
         # TODO: Fix Compel for SDXL's add_text_embeds etc.
         # if self.sdxl:

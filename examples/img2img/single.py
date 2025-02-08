@@ -15,9 +15,9 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 def main(
     input: str = os.path.join(CURRENT_DIR, "..", "..", "images", "inputs", "input.png"),
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.png"),
-    model_id_or_path: str = "KBlueLeaf/kohaku-v2.1",
+    model_id_or_path: str = "stabilityai/sd-turbo",
     lora_dict: Optional[Dict[str, float]] = None,
-    prompt: str = "1girl with brown dog hair, thick glasses, smiling",
+    prompt: str = "1girl with (brown dog)2.0 hair, thick glasses, smiling",
     negative_prompt: str = "low quality, bad quality, blurry, low resolution",
     width: int = 512,
     height: int = 512,
@@ -84,6 +84,7 @@ def main(
         use_denoising_batch=use_denoising_batch,
         cfg_type=cfg_type,
         seed=seed,
+        device="mps"
     )
 
     stream.prepare(

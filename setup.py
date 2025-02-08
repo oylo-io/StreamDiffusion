@@ -41,11 +41,12 @@ install_requires = [
     deps["diffusers"],
     deps["transformers"],
     deps["accelerate"],
+    "compel @ git+https://github.com/oylo-io/compel.git#egg=compel"
 ]
 
 setup(
     name="streamdiffusion",
-    version="0.1.6",
+    version="0.1.7",
     description="real-time interactive image generation pipeline",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",

@@ -41,7 +41,7 @@ install_requires = [
     deps["diffusers"],
     deps["transformers"],
     deps["accelerate"],
-    "compel @ git+https://github.com/oylo-io/compel.git"
+    "compel @ git+https://github.com/oylo-io/compel.git#egg=compel"
 ]
 
 setup(

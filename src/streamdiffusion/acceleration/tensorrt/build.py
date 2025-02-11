@@ -63,6 +63,8 @@ def accelerate_pipeline(model_id, vae_id, height, width, num_timesteps, export_d
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Accelerate Pipeline with TRT")
+    parser.add_argument('--sdxl',
+                        type=bool, default=False)
     parser.add_argument('--model_id',
                         type=str, default='stabilityai/sd-turbo')
     parser.add_argument('--vae_id',
@@ -74,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument('--width',
                         type=int, required=True, help='image width')
     parser.add_argument('--num_timesteps',
-                        type=int, default=10, help='number of timesteps')
+                        type=int, default=1, help='number of timesteps')
 
     args = parser.parse_args()
 

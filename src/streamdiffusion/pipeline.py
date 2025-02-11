@@ -100,13 +100,13 @@ class StreamDiffusion:
             self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
 
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
-        if self.sdxl:
-
-            # advanced prompt encoding
-            self.compel = Compel(tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
-                                 text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
-                                 returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                                 requires_pooled=[False, True])
+        # if self.sdxl:
+        #
+        #     # advanced prompt encoding
+        #     self.compel = Compel(tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
+        #                          text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
+        #                          returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+        #                          requires_pooled=[False, True])
 
     def load_lcm_lora(
         self,
@@ -283,19 +283,19 @@ class StreamDiffusion:
         self.prompt_embeds = encoder_output[0].to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
 
         # TODO: Fix Compel for SDXL's add_text_embeds etc.
-        # if self.sdxl:
-        #     self.add_text_embeds = encoder_output[2]
-        #     original_size = (self.height, self.width)
-        #     crops_coords_top_left = (0, 0)
-        #     target_size = (self.height, self.width)
-        #     text_encoder_projection_dim = int(self.add_text_embeds.shape[-1])
-        #     self.add_time_ids = self._get_add_time_ids(
-        #         original_size,
-        #         crops_coords_top_left,
-        #         target_size,
-        #         dtype=encoder_output[0].dtype,
-        #         text_encoder_projection_dim=text_encoder_projection_dim,
-        #     )
+        if self.sdxl:
+            self.add_text_embeds = encoder_output[2]
+            original_size = (self.height, self.width)
+            crops_coords_top_left = (0, 0)
+            target_size = (self.height, self.width)
+            text_encoder_projection_dim = int(self.add_text_embeds.shape[-1])
+            self.add_time_ids = self._get_add_time_ids(
+                original_size,
+                crops_coords_top_left,
+                target_size,
+                dtype=encoder_output[0].dtype,
+                text_encoder_projection_dim=text_encoder_projection_dim,
+            )
 
         if self.use_denoising_batch and self.cfg_type == "full":
             uncond_prompt_embeds = encoder_output[1].repeat(self.batch_size, 1, 1)

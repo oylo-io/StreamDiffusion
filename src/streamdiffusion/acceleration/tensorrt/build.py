@@ -20,7 +20,7 @@ def accelerate_pipeline(is_sdxl, model_id, height, width, num_timesteps, export_
     # load vae
     vae = AutoencoderTiny.from_pretrained(vae_model_id)
 
-    print(f'Loading {pipe_type=} with {model_id=} and {vae_model_id}')
+    print(f'Loading pipe={type(pipe_type)} with model={model_id} and vae={vae_model_id}')
 
     # load pipeline
     pipe = pipe_type.from_pretrained(
@@ -37,7 +37,6 @@ def accelerate_pipeline(is_sdxl, model_id, height, width, num_timesteps, export_
         height=height,
         width=width
     )
-    print(f'Stream is {stream.sdxl=}')
 
     # Set batch sizes
     vae_batch_size = 1
@@ -103,4 +102,4 @@ if __name__ == "__main__":
 # Usage:
 # docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
 # python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --num_timesteps 2 --export_dir /root/app/engines/sd-turbo_b2
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --num_timesteps 1 --export_dir /root/app/engines/sdxl-turbo --sdxl True
+# python3 src/streamdiffusion/acceleration/tensorrt/build.py --model_id stabilityai/sdxl-turbo --height 512 --width 904 --num_timesteps 1 --export_dir /root/app/engines/sdxl-turbo --sdxl True

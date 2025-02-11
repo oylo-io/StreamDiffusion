@@ -282,7 +282,6 @@ class StreamDiffusion:
         encoder_output = self.compel.build_weighted_embedding(prompt)
         self.prompt_embeds = encoder_output[0].to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
 
-        # TODO: Fix Compel for SDXL's add_text_embeds etc.
         if self.sdxl:
             self.add_text_embeds = encoder_output[2]
             original_size = (self.height, self.width)

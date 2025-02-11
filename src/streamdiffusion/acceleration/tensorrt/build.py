@@ -8,6 +8,19 @@ from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
 
 
+class UNetXLWrapper(torch.nn.Module):
+    def __init__(self, unet):
+        super(UNetXLWrapper, self).__init__()
+        self.unet = unet
+
+    def forward(self, sample, timestep, encoder_hidden_states, text_embeds, time_ids):
+        added_cond_kwargs = {
+            "text_embeds": text_embeds,
+            "time_ids": time_ids
+        }
+        return self.unet(sample, timestep, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+
+
 def accelerate_pipeline(is_sdxl, model_id, height, width, num_timesteps, export_dir):
 
     # prepare SD pipeline
@@ -41,6 +54,10 @@ def accelerate_pipeline(is_sdxl, model_id, height, width, num_timesteps, export_
     # Set batch sizes
     vae_batch_size = 1
     unet_batch_size = num_timesteps
+
+    # wrap to handle add_cond_kwargs correctly for sdxl
+    if is_sdxl:
+        pipe.unet = UNetXLWrapper(pipe.unet)
 
     # build models
     accelerate_with_tensorrt(

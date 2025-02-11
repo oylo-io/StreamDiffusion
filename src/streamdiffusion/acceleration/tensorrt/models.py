@@ -430,10 +430,10 @@ class UNetXLTurbo(BaseModel):
         )
 
         # additional text embeds
-        add_text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device),
+        add_text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device)
 
         # time ids
-        add_time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device),
+        add_time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device)
 
         return sample_input, timestep_input, encoder_hidden_states_input, add_text_embeds, add_time_ids
 

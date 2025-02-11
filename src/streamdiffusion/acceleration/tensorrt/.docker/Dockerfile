@@ -81,6 +81,9 @@ COPY --from=builder /opt/layers/nvtx /usr/local/lib/python3.10/dist-packages
 # Link CUDA
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH
 
+# Update pip
+RUN pip install --upgrade pip setuptools wheel
+
 # Install StreamDiffusion
 ARG SD_BRANCH=main
 WORKDIR /app

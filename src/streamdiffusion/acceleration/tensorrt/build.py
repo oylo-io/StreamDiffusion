@@ -2,19 +2,26 @@ import argparse
 from pathlib import Path
 
 import torch
-from diffusers import AutoencoderTiny, StableDiffusionPipeline
+from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
 
 
-def accelerate_pipeline(model_id, vae_id, height, width, num_timesteps, export_dir):
+def accelerate_pipeline(is_sdxl, model_id, height, width, num_timesteps, export_dir):
+
+    # prepare SD pipeline
+    pipe_type = StableDiffusionPipeline
+    vae_model = "madebyollin/taesd"
+    if is_sdxl:
+        vae_model = "madebyollin/taesdxl"
+        pipe_type = StableDiffusionXLPipeline
 
     # load vae
-    vae = AutoencoderTiny.from_pretrained(vae_id)
+    vae = AutoencoderTiny.from_pretrained(vae_model)
 
-    # create SD pipeline
-    pipe = StableDiffusionPipeline.from_pretrained(
+    # load pipeline
+    pipe = pipe_type.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
         vae=vae
@@ -67,8 +74,8 @@ if __name__ == "__main__":
                         type=bool, default=False)
     parser.add_argument('--model_id',
                         type=str, default='stabilityai/sd-turbo')
-    parser.add_argument('--vae_id',
-                        type=str, default='madebyollin/taesd')
+    # parser.add_argument('--vae_id',
+    #                     type=str, default='madebyollin/taesd')
     parser.add_argument('--export_dir',
                         type=Path, required=True, help='Directory for generated models')
     parser.add_argument('--height',
@@ -81,8 +88,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     accelerate_pipeline(
+        args.sdxl,
         args.model_id,
-        args.vae_id,
+        # args.vae_id,
         args.height,
         args.width,
         args.num_timesteps,

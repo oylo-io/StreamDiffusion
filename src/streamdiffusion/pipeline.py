@@ -203,7 +203,8 @@ class StreamDiffusion:
         self.delta = delta
 
         # update prompt
-        self.update_prompt(prompt)
+        if prompt:
+            self.update_prompt(prompt)
 
         self.scheduler.set_timesteps(num_inference_steps, self.device, strength=strength)
         self.timesteps = self.scheduler.timesteps.to(self.device)

@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir torch torchvision --extra-index-url https://downl
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 # Install TensorRT
-RUN pip install --no-cache-dir tensorrt && \
+RUN pip install --no-cache-dir tensorrt==10.7 && \
     rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 
 # Install requirements

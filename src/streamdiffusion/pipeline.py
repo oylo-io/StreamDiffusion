@@ -50,6 +50,8 @@ class StreamDiffusion:
         self.denoising_steps_num = len(t_index_list)
 
         self.prompt_embeds = None
+        self.add_text_embeds = None
+        self.add_time_ids = None
 
         self.cfg_type = cfg_type
         self.alpha_prod_t_sqrt = None
@@ -102,13 +104,18 @@ class StreamDiffusion:
             self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
 
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
-        # if self.sdxl:
-        #
-        #     # advanced prompt encoding
-        #     self.compel = Compel(tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
-        #                          text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
-        #                          returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-        #                          requires_pooled=[False, True])
+
+        # override compel if we're in SDXL mode
+        if self.sdxl:
+
+            # For SDXL-Turbo, we use ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED
+            # We need pooled embeddings too
+            self.compel = Compel(
+                tokenizer=pipe.tokenizer,
+                text_encoder=pipe.text_encoder,
+                # returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                # requires_pooled=True
+            )
 
     def load_lcm_lora(
         self,
@@ -278,38 +285,56 @@ class StreamDiffusion:
             dim=0,
         )
 
-    @torch.no_grad()
+    @torch.inference_mode
+    def generate_prompt_embeddings(self, prompt: str):
+        return self.pipe.encode_prompt(
+            prompt=prompt,
+            device=self.device,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=False,
+        )
+
     def update_prompt(self, prompt: str) -> None:
 
-        # build weighted embeddings for prompt
-        encoder_output = self.compel.build_weighted_embedding(prompt)
-        self.prompt_embeds = encoder_output[0].to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
+        # Get embeddings from Compel
+        embeds = self.generate_prompt_embeddings(prompt) # self.compel(prompt)
 
-        if self.sdxl:
-            self.add_text_embeds = encoder_output[2]
-            original_size = (self.height, self.width)
-            crops_coords_top_left = (0, 0)
-            target_size = (self.height, self.width)
-            text_encoder_projection_dim = int(self.add_text_embeds.shape[-1])
+        if not self.sdxl:
+
+            # repeat embeds for batch size and store
+            self.prompt_embeds = embeds.to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
+
+        else:
+
+            # unpack embeds
+            text_embeds, pooled_embeds = embeds[0], embeds[2]
+
+            # repeat embeds for batch size and store
+            self.prompt_embeds = text_embeds.to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
+
+            # Process pooled embeddings
+            self.add_text_embeds = pooled_embeds.to(dtype=torch.float16)
+
+            # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(
-                original_size,
-                crops_coords_top_left,
-                target_size,
-                dtype=encoder_output[0].dtype,
-                text_encoder_projection_dim=text_encoder_projection_dim,
+                (self.height, self.width),
+                (0, 0),
+                (self.height, self.width),
+                dtype=self.prompt_embeds.dtype,
+                text_encoder_projection_dim=int(self.add_text_embeds.shape[-1]),
             )
 
-        if self.use_denoising_batch and self.cfg_type == "full":
-            uncond_prompt_embeds = encoder_output[1].repeat(self.batch_size, 1, 1)
-        elif self.cfg_type == "initialize":
-            uncond_prompt_embeds = encoder_output[1].repeat(self.frame_bff_size, 1, 1)
-
-        if self.guidance_scale > 1.0 and (
-                self.cfg_type == "initialize" or self.cfg_type == "full"
-        ):
-            self.prompt_embeds = torch.cat(
-                [uncond_prompt_embeds, self.prompt_embeds], dim=0
-            )
+        # if self.use_denoising_batch and self.cfg_type == "full":
+        #     uncond_prompt_embeds = encoder_output[1].repeat(self.batch_size, 1, 1)
+        # elif self.cfg_type == "initialize":
+        #     uncond_prompt_embeds = encoder_output[1].repeat(self.frame_bff_size, 1, 1)
+        #
+        # if self.guidance_scale > 1.0 and (
+        #         self.cfg_type == "initialize" or self.cfg_type == "full"
+        # ):
+        #     self.prompt_embeds = torch.cat(
+        #         [uncond_prompt_embeds, self.prompt_embeds], dim=0
+        #     )
 
     def add_noise(
         self,

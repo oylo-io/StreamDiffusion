@@ -218,6 +218,12 @@ class StreamDiffusion:
         if prompt:
             self.update_prompt(prompt)
 
+        # update image prompt
+        if self.ip_adapter_image_embeds is None:
+            black_image = PIL.Image.new('RGB', (224, 224), color=0)
+            self.generate_image_embedding(black_image)
+            self.ip_adapter_scale = 0.0
+
         self.scheduler.set_timesteps(num_inference_steps, self.device, strength=strength)
         self.timesteps = self.scheduler.timesteps.to(self.device)
 
@@ -304,6 +310,7 @@ class StreamDiffusion:
 
         # Use the pipeline's image processing methods directly
         if hasattr(self.pipe, "feature_extractor") and self.pipe.feature_extractor is not None:
+
             # Process the image using the pipeline's feature extractor
             if not isinstance(image, list):
                 image = [image]

@@ -49,6 +49,8 @@ class StreamDiffusion:
         self.frame_bff_size = frame_buffer_size
         self.denoising_steps_num = len(t_index_list)
 
+        self.prompt_embeds = None
+
         self.cfg_type = cfg_type
         self.alpha_prod_t_sqrt = None
         self.beta_prod_t_sqrt = None
@@ -201,7 +203,8 @@ class StreamDiffusion:
         self.delta = delta
 
         # update prompt
-        self.update_prompt(prompt)
+        if prompt:
+            self.update_prompt(prompt)
 
         self.scheduler.set_timesteps(num_inference_steps, self.device, strength=strength)
         self.timesteps = self.scheduler.timesteps.to(self.device)

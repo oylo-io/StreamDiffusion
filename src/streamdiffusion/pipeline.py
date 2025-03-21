@@ -302,7 +302,7 @@ class StreamDiffusion:
         if not self.sdxl:
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = embeds.to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
         else:
 
@@ -310,10 +310,10 @@ class StreamDiffusion:
             text_embeds, pooled_embeds = embeds[0], embeds[2]
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = text_embeds.to(dtype=torch.float16).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
             # Process pooled embeddings
-            self.add_text_embeds = pooled_embeds.to(dtype=torch.float16)
+            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype)
 
             # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(

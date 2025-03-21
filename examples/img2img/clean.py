@@ -79,8 +79,8 @@ stream.generate_image_embedding(reference_image)
 prompt = "rabbit, high quality, best quality"
 
 # Loop through different scales
-ip_scales = [0.5, 0.2, 0.4, 0.6, 0.8]
-strengths = [0.5, 0.2, 0.4, 0.6, 0.8]
+ip_scales = [0.2, 0.4, 0.6, 0.8]
+strengths = [0.2, 0.4, 0.6, 0.8]
 all_images = []
 
 for ip in ip_scales:
@@ -101,9 +101,10 @@ for ip in ip_scales:
         print(f'Generating for {ip=}, {s=}')
         img_pt = stream(input_image, encode_input=True, decode_output=True)
         img_pil = postprocess_image(img_pt)[0]
-        img_pil = add_label(img_pil, f'str={s}')
+        img_pil = add_label(img_pil, f'ip={ip}, str={s}')
         all_images.append(img_pil)
 
 # grid = make_image_grid(all_images, rows=2, cols=len(all_images) // 2)
-grid = make_image_grid(all_images, rows=1, cols=len(all_images))
+grid = make_image_grid(all_images, rows=4, cols=len(all_images) // 4)
+grid.save('grid.jpg')
 grid.show()

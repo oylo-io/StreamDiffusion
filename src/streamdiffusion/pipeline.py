@@ -527,6 +527,14 @@ class StreamDiffusion:
         added_cond_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
 
+        # Set the IP-Adapter scale directly on the pipe BEFORE inference
+        # This is the critical step that was missing
+        if hasattr(self, "ip_adapter_scale") and self.ip_adapter_scale is not None:
+
+            # This sets the scale on the UNet's attention processors directly
+            self.pipe.set_ip_adapter_scale(self.ip_adapter_scale)
+            print(f"Setting IP-Adapter scale to {self.ip_adapter_scale}")
+
         # Add IP-Adapter embeddings if available
         if self.ip_adapter_image_embeds is not None:
 

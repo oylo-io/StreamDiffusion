@@ -56,7 +56,7 @@ class StreamDiffusion:
 
         # Image Embeddings
         self.ip_adapter_image_embeds = None
-        self.ip_adapter_scale = 1.0
+        self.ip_adapter_scale = 0.0
 
         self.cfg_type = cfg_type
         self.alpha_prod_t_sqrt = None

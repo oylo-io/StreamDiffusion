@@ -49,9 +49,14 @@ class StreamDiffusion:
         self.frame_bff_size = frame_buffer_size
         self.denoising_steps_num = len(t_index_list)
 
+        # Text Embeddings
         self.prompt_embeds = None
         self.add_text_embeds = None
         self.add_time_ids = None
+
+        # Image Embeddings
+        self.ip_adapter_image_embeds = None
+        self.ip_adapter_scale = 1.0
 
         self.cfg_type = cfg_type
         self.alpha_prod_t_sqrt = None
@@ -285,6 +290,40 @@ class StreamDiffusion:
             dim=0,
         )
 
+    @torch.inference_mode()
+    def generate_image_embedding(self, image: Union[torch.Tensor, PIL.Image.Image, np.ndarray]) -> None:
+        """
+        Generate image embeddings for IP-Adapter from a reference image.
+
+        Args:
+            image: A reference image to control generation. Can be a PIL Image, tensor, or numpy array.
+        """
+        if not hasattr(self.pipe, "image_encoder") or self.pipe.image_encoder is None:
+            raise ValueError(
+                "The pipeline doesn't have an image_encoder. Make sure IP-Adapter is properly loaded.")
+
+        # Use the pipeline's image processing methods directly
+        if hasattr(self.pipe, "feature_extractor") and self.pipe.feature_extractor is not None:
+            # Process the image using the pipeline's feature extractor
+            if not isinstance(image, list):
+                image = [image]
+
+            # Process the image
+            image = self.pipe.feature_extractor(
+                images=image,
+                return_tensors="pt",
+            ).pixel_values.to(device=self.device, dtype=self.dtype)
+
+            # Generate image embeddings using the pipeline's image encoder
+            image_embeds = self.pipe.image_encoder(image).image_embeds
+
+            # Store the image embeddings in the format expected by IP-Adapter
+            self.ip_adapter_image_embeds = image_embeds
+
+            print(f"Generated image embeddings with shape: {image_embeds.shape}")
+        else:
+            raise ValueError("Feature extractor not found. IP-Adapter may not be properly loaded.")
+
     @torch.inference_mode
     def generate_prompt_embeddings(self, prompt: str):
         return self.pipe.encode_prompt(
@@ -488,6 +527,24 @@ class StreamDiffusion:
         added_cond_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
 
+        # Add IP-Adapter embeddings if available
+        if self.ip_adapter_image_embeds is not None:
+
+            # Add the image embeddings to added_cond_kwargs
+            added_cond_kwargs["image_embeds"] = self.ip_adapter_image_embeds
+
+            # Add the scale for IP-Adapter if it's needed by the implementation
+            if hasattr(self.pipe, "config") and getattr(self.pipe.config, "requires_adapter_scale", False):
+                added_cond_kwargs["adapter_scale"] = self.ip_adapter_scale
+
+        # Handle SDXL specific added conditions
+        if self.sdxl:
+            base_added_cond_kwargs = {
+                "text_embeds": self.add_text_embeds.to(self.device),
+                "time_ids": self.add_time_ids.to(self.device)
+            }
+            added_cond_kwargs.update(base_added_cond_kwargs)
+
         if self.use_denoising_batch:
             t_list = self.sub_timesteps_tensor
             if self.denoising_steps_num > 1:
@@ -495,8 +552,6 @@ class StreamDiffusion:
                 self.stock_noise = torch.cat(
                     (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
                 )
-            if self.sdxl:
-                added_cond_kwargs = {"text_embeds": self.add_text_embeds.to(self.device), "time_ids": self.add_time_ids.to(self.device)}
 
             x_t_latent = x_t_latent.to(self.device)
             t_list = t_list.to(self.device)
@@ -524,8 +579,6 @@ class StreamDiffusion:
                 ).repeat(
                     self.frame_bff_size,
                 )
-                if self.sdxl:
-                    added_cond_kwargs = {"text_embeds": self.add_text_embeds.to(self.device), "time_ids": self.add_time_ids.to(self.device)}
                 x_0_pred, model_pred = self.unet_step(x_t_latent, t, idx=idx, added_cond_kwargs=added_cond_kwargs)
                 if idx < len(self.sub_timesteps_tensor) - 1:
                     if self.do_add_noise:

@@ -29,12 +29,14 @@ device = 'mps'
 dtype = torch.float16
 
 # load vae
+print('Loading Tiny VAE')
 vae = AutoencoderTiny.from_pretrained(
     "madebyollin/taesdxl",
     torch_dtype=dtype,
 ).to(device)
 
 # load pipeline
+print('Loading Pipeline')
 pipe = StableDiffusionXLPipeline.from_pretrained(
     'stabilityai/sdxl-turbo',
     vae=vae,
@@ -42,7 +44,17 @@ pipe = StableDiffusionXLPipeline.from_pretrained(
     variant='fp16'
 ).to(device)
 
+# Load and add IP-Adapter to the pipeline
+print('Loading IP Adapter')
+pipe.load_ip_adapter(
+    "h94/IP-Adapter",
+    subfolder="sdxl_models",
+    weight_name="ip-adapter_sdxl.safetensors",
+    torch_dtype=dtype
+)
+
 # StreamDiffusion
+print('Loading StreamDiffusion')
 stream = StreamDiffusion(
     pipe,
     device=device,
@@ -54,35 +66,44 @@ stream = StreamDiffusion(
     width=904
 )
 
+print('Loading Images')
 # Load images
 input_image = load_image("https://img.freepik.com/free-vector/duck-with-green-head-cartoon-character_1308-96950.jpg").resize((512, 512))
-# reference_image = load_image("/Users/himmelroman/Desktop/ref.png")  # Image for IP-Adapter
-print('Images loaded')
+reference_image = load_image("/Users/himmelroman/Desktop/ref.png")  # Image for IP-Adapter
+
+# Generate image embedding for IP-Adapter
+print('Generating IP Embeddings')
+stream.generate_image_embedding(reference_image)
 
 # Set up generation parameters
 prompt = "rabbit, high quality, best quality"
 
 # Loop through different scales
-# ip_scales = [0.1, 0.3, 0.6]
-strengths = [0.3, 0.6, 0.65, 0.7, 0.8, 0.9]
+ip_scales = [0.5, 0.2, 0.4, 0.6, 0.8]
+strengths = [0.5, 0.2, 0.4, 0.6, 0.8]
 all_images = []
 
-for s in strengths:
+for ip in ip_scales:
+    for s in strengths:
 
-    print(f'Preparing for strength={s}')
-    # prepare
-    stream.t_list = [99 - int(100*s)]
-    stream.prepare(
-        prompt=prompt,
-        num_inference_steps=100,
-        guidance_scale=0.0,
-        seed=int(123)
-    )
-    print(f'Generating for strength={s}')
-    img_pt = stream(input_image, encode_input=True, decode_output=True)
-    img_pil = postprocess_image(img_pt)[0]
-    img_pil = add_label(img_pil, f'str={s}')
-    all_images.append(img_pil)
+        print(f'Preparing for {ip=}, {s=}')
+        stream.ip_adapter_scale = ip
 
-grid = make_image_grid(all_images, rows=2, cols=len(all_images) // 2)
+        # prepare
+        stream.t_list = [99 - int(100 * s)]
+        stream.prepare(
+            prompt=prompt,
+            num_inference_steps=100,
+            guidance_scale=0.0,
+            seed=int(123)
+        )
+
+        print(f'Generating for {ip=}, {s=}')
+        img_pt = stream(input_image, encode_input=True, decode_output=True)
+        img_pil = postprocess_image(img_pt)[0]
+        img_pil = add_label(img_pil, f'str={s}')
+        all_images.append(img_pil)
+
+# grid = make_image_grid(all_images, rows=2, cols=len(all_images) // 2)
+grid = make_image_grid(all_images, rows=1, cols=len(all_images))
 grid.show()

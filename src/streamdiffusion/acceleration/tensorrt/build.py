@@ -36,7 +36,10 @@ class UNetXLIPAdapterWrapper(torch.nn.Module):
         cross_attention_kwargs = {
             "ip_adapter_scale": ip_adapter_scale
         }
-        return self.unet(sample, timestep, encoder_hidden_states,
+        return self.unet(sample,
+                         timestep,
+                         encoder_hidden_states,
+                         timestep_cond=None,
                          added_cond_kwargs=added_cond_kwargs, cross_attention_kwargs=cross_attention_kwargs)
 
 

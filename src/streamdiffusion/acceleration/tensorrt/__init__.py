@@ -91,6 +91,7 @@ def compile_unet(
 
 def accelerate_with_tensorrt(
     stream: StreamDiffusion,
+    unet_class: type,
     engine_dir: str,
     unet_batch_size: tuple = (1, 2),
     vae_batch_size: tuple = (1, 1),
@@ -133,7 +134,6 @@ def accelerate_with_tensorrt(
     vae_encoder_engine_path = f"{engine_dir}/vae_encoder.engine"
     vae_decoder_engine_path = f"{engine_dir}/vae_decoder.engine"
 
-    unet_class = UNetXLTurbo if stream.sdxl else UNet
     unet_model = unet_class(
         fp16=True,
         device=stream.device,

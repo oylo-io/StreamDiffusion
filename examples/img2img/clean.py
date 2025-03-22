@@ -7,6 +7,7 @@ from diffusers.utils import load_image, make_image_grid
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.image_utils import postprocess_image
+from streamdiffusion.ip_adapter import prepare_unet_for_onnx_export
 
 
 def add_label(image, text):
@@ -53,6 +54,10 @@ pipe.load_ip_adapter(
     weight_name="ip-adapter_sdxl.safetensors",
     torch_dtype=dtype
 )
+
+# replace attention processors
+print('Replacing attention processors')
+prepare_unet_for_onnx_export(pipe)
 
 # StreamDiffusion
 print('Loading StreamDiffusion')

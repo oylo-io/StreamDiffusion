@@ -122,22 +122,6 @@ class StreamDiffusion:
                 # requires_pooled=True
             )
 
-    def load_lcm_lora(
-        self,
-        pretrained_model_name_or_path_or_dict: Union[
-            str, Dict[str, torch.Tensor]
-        ] = "latent-consistency/lcm-lora-sdv1-5",
-        adapter_name: Optional[Any] = None,
-        **kwargs,
-    ) -> None:
-
-        if not self.pipe:
-            raise Exception("No pipeline")
-
-        self.pipe.load_lora_weights(
-            pretrained_model_name_or_path_or_dict, adapter_name, **kwargs
-        )
-
     def load_lora(
         self,
         pretrained_lora_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
@@ -178,7 +162,7 @@ class StreamDiffusion:
     def disable_similar_image_filter(self) -> None:
         self.similar_image_filter = False
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def prepare(
         self,
         prompt: str,
@@ -331,7 +315,7 @@ class StreamDiffusion:
         else:
             raise ValueError("Feature extractor not found. IP-Adapter may not be properly loaded.")
 
-    @torch.inference_mode
+    @torch.inference_mode()
     def generate_prompt_embeddings(self, prompt: str):
         return self.pipe.encode_prompt(
             prompt=prompt,
@@ -435,6 +419,7 @@ class StreamDiffusion:
         model_pred = self.unet(
             x_t_latent_plus_uc,
             t_list,
+            cross_attention_kwargs={"ip_adapter_scale": torch.tensor([0.8888], device=self.device)},
             encoder_hidden_states=self.prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
@@ -511,6 +496,7 @@ class StreamDiffusion:
         add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
         return add_time_ids
 
+    @torch.inference_mode()
     def encode_image(self, image_tensors: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
         image_tensors = image_tensors.to(
             device=self.device,
@@ -524,6 +510,7 @@ class StreamDiffusion:
 
         return img_latent
 
+    @torch.inference_mode()
     def decode_image(self, x_0_pred_out: torch.Tensor) -> torch.Tensor:
         output_latent = self.vae.decode(
             x_0_pred_out / self.vae.config.scaling_factor, return_dict=False
@@ -540,7 +527,6 @@ class StreamDiffusion:
 
             # This sets the scale on the UNet's attention processors directly
             self.pipe.set_ip_adapter_scale(self.ip_adapter_scale)
-            print(f"Setting IP-Adapter scale to {self.ip_adapter_scale}")
 
         # Add IP-Adapter embeddings if available
         if self.ip_adapter_image_embeds is not None:
@@ -610,7 +596,7 @@ class StreamDiffusion:
 
         return x_0_pred_out
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def __call__(
         self,
         x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
@@ -661,32 +647,6 @@ class StreamDiffusion:
 
         return x_output
 
-    @torch.no_grad()
-    def txt2img(self, batch_size: int = 1) -> torch.Tensor:
-        x_0_pred_out = self.predict_x0_batch(
-            torch.randn((batch_size, 4, self.latent_height, self.latent_width)).to(
-                device=self.device, dtype=self.dtype
-            )
-        )
-        x_output = self.decode_image(x_0_pred_out).detach().clone()
-        return x_output
-
-    def txt2img_sd_turbo(self, batch_size: int = 1) -> torch.Tensor:
-        x_t_latent = torch.randn(
-            (batch_size, 4, self.latent_height, self.latent_width),
-            device=self.device,
-            dtype=self.dtype,
-        )
-        model_pred = self.unet(
-            x_t_latent,
-            self.sub_timesteps_tensor,
-            encoder_hidden_states=self.prompt_embeds,
-            return_dict=False,
-        )[0]
-        x_0_pred_out = (
-            x_t_latent - self.beta_prod_t_sqrt * model_pred
-        ) / self.alpha_prod_t_sqrt
-        return self.decode_image(x_0_pred_out)
 
     @staticmethod
     def slerp(v1, v2, t, DOT_THR=0.9995, zdim=-1):

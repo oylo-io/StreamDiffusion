@@ -72,19 +72,19 @@ stream = StreamDiffusion(
     width=904
 )
 
-print('Loading Images')
 # Load images
-input_image = load_image("https://images.saatchiart.com/saatchi/2158365/art/10132877/9195647-KGRGTRFG-7.jpg").resize((512, 512))
-reference_image = load_image("https://kavkaartbooks.s3.cdn-upgates.com/_cache/8/b/8b57c4db665a0b35b683babd11c1e860-img-3650.jpg")  # Image for IP-Adapter
+print('Loading Images')
+input_image = load_image("/Users/himmelroman/Desktop/albert.png").resize((512, 512))
+reference_image = load_image("/Users/himmelroman/Desktop/Gur.jpg")
 
-# Generate image embedding for IP-Adapter
+# Generate image embeddings
 print('Generating IP Embeddings')
-black_image = Image.new('RGB', (224, 224), color=0)
-stream.generate_image_embedding(black_image)
-# stream.generate_image_embedding(reference_image)
+stream.generate_image_embedding(reference_image)
 
-# Set up generation parameters
+# Generate prompt embeddings
+print('Generating Prompt Embeddings')
 prompt = "ibex, high quality, best quality"
+stream.update_prompt(prompt)
 
 # Loop through different scales
 ip_scales = [0.6, 0.7, 0.8, 0.9]
@@ -95,7 +95,7 @@ for ip in ip_scales:
     for s in strengths:
 
         print(f'Preparing for {ip=}, {s=}')
-        stream.ip_adapter_scale = ip
+        stream.set_image_prompt_scale(ip)
 
         # prepare
         stream.t_list = [99 - int(100 * s)]
@@ -105,10 +105,6 @@ for ip in ip_scales:
             seed=123
         )
 
-        # prepare prompts
-        stream.update_prompt(prompt)
-        stream.update_prompt(prompt)
-
         print(f'Generating for {ip=}, {s=}')
         for _ in range(stream.denoising_steps_num - 1):
             stream(input_image, encode_input=True, decode_output=True)
@@ -117,7 +113,7 @@ for ip in ip_scales:
         img_pil = add_label(img_pil, f'ip={ip}, str={s}')
         all_images.append(img_pil)
 
-grid = make_image_grid(all_images, rows=1, cols=len(all_images))
-# grid = make_image_grid(all_images, rows=4, cols=len(all_images) // 4)
+# grid = make_image_grid(all_images, rows=1, cols=len(all_images))
+grid = make_image_grid(all_images, rows=4, cols=len(all_images) // 4)
 grid.save('grid.jpg')
 grid.show()

@@ -320,7 +320,7 @@ class StreamDiffusion:
         if not self.sdxl:
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = embeds.to(device=self.device, dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
         else:
 
@@ -328,10 +328,10 @@ class StreamDiffusion:
             text_embeds, pooled_embeds = embeds[0], embeds[2]
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.to(device=self.device, dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
-            # Process pooled embeddings
-            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype)
+            # Process additional text embeddings needed for SDXL
+            self.add_text_embeds = pooled_embeds.to(device=self.device, dtype=self.dtype)
 
             # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(
@@ -340,7 +340,7 @@ class StreamDiffusion:
                 (self.height, self.width),
                 dtype=self.prompt_embeds.dtype,
                 text_encoder_projection_dim=int(self.add_text_embeds.shape[-1]),
-            )
+            ).to(self.device)
 
     def add_noise(
         self,

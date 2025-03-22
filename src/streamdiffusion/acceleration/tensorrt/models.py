@@ -321,7 +321,7 @@ class UNetXLTurbo(BaseModel):
     def __init__(
         self,
         fp16=True,
-        device="mps",
+        device="cuda",
         max_batch_size=1,
         min_batch_size=1,
         encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo
@@ -442,7 +442,7 @@ class UNetXLTurboIPAdapter(BaseModel):
     def __init__(
         self,
         fp16=True,
-        device="mps",
+        device="cuda",
         max_batch_size=1,
         min_batch_size=1,
         encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo

@@ -441,6 +441,13 @@ def export_onnx(
 ):
     with torch.inference_mode(), torch.autocast("cuda"):
         inputs = model_data.get_sample_input(opt_batch_size, opt_image_height, opt_image_width)
+
+        print(f'ONNX inputs: {model_data.get_input_names()}')
+        print(f'ONNX output: {model_data.get_output_names()}')
+        print(f'ONNX trace samples:')
+        for i, inp in enumerate(inputs):
+            print(f'Input {i}: {inp}')
+
         torch.onnx.export(
             model,
             inputs,

@@ -3,15 +3,13 @@ import os
 
 import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import (
-    retrieve_latents,
-)
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from polygraphy import cuda
 
 from ...pipeline import StreamDiffusion
 from .builder import EngineBuilder, create_onnx_path
 from .engine import AutoencoderKLEngine, UNet2DConditionModelEngine
-from .models import VAE, BaseModel, UNet, VAEEncoder, UNetXLTurbo
+from .models import BaseModel, VAE, VAEEncoder, UNet, UNetXLTurbo, UNetXLTurboIPAdapter
 
 
 class TorchVAEEncoder(torch.nn.Module):
@@ -97,6 +95,8 @@ def accelerate_with_tensorrt(
     unet_engine_build_options=None,
     vae_engine_build_options=None,
     use_cuda_graph: bool = False,
+    is_sdxl = False,
+    ip_adapter = False
 ):
     # argument default values should not be mutable
     if vae_engine_build_options is None:
@@ -133,7 +133,14 @@ def accelerate_with_tensorrt(
     vae_encoder_engine_path = f"{engine_dir}/vae_encoder.engine"
     vae_decoder_engine_path = f"{engine_dir}/vae_decoder.engine"
 
-    unet_class = UNetXLTurbo if stream.sdxl else UNet
+    # wrap to handle add_cond_kwargs correctly for sdxl
+    unet_class = UNet
+    if is_sdxl:
+        unet_class = UNetXLTurbo
+        if ip_adapter:
+            unet_class = UNetXLTurboIPAdapter
+
+    print(f'Using UNET class: {unet_class}')
     unet_model = unet_class(
         fp16=True,
         device=stream.device,

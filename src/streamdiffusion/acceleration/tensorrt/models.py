@@ -1,67 +1,4 @@
-#! fork: https://github.com/NVIDIA/TensorRT/blob/main/demo/Diffusion/models.py
-
-#
-# SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
 import torch
-import onnx_graphsurgeon as gs
-from onnx import shape_inference
-from polygraphy.backend.onnx.loader import fold_constants
-
-
-class Optimizer:
-    def __init__(self, onnx_graph, verbose=False):
-        self.graph = gs.import_onnx(onnx_graph)
-        self.verbose = verbose
-
-    def info(self, prefix):
-        if self.verbose:
-            print(
-                f"{prefix} .. {len(self.graph.nodes)} nodes, {len(self.graph.tensors().keys())} tensors, {len(self.graph.inputs)} inputs, {len(self.graph.outputs)} outputs"
-            )
-
-    def cleanup(self, return_onnx=False):
-        self.graph.cleanup().toposort()
-        if return_onnx:
-            return gs.export_onnx(self.graph)
-
-    def select_outputs(self, keep, names=None):
-        self.graph.outputs = [self.graph.outputs[o] for o in keep]
-        if names:
-            for i, name in enumerate(names):
-                self.graph.outputs[i].name = name
-
-    def fold_constants(self, return_onnx=False):
-        onnx_graph = fold_constants(gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=True)
-        self.graph = gs.import_onnx(onnx_graph)
-        if return_onnx:
-            return onnx_graph
-
-    def infer_shapes(self, return_onnx=False):
-        onnx_graph = gs.export_onnx(self.graph)
-        # if onnx_graph.ByteSize() > 2147483648:
-        #     raise TypeError("ERROR: model size exceeds supported 2GB limit")
-        # else:
-        #     onnx_graph = shape_inference.infer_shapes(onnx_graph)
-
-        onnx_graph = shape_inference.infer_shapes(onnx_graph)
-        self.graph = gs.import_onnx(onnx_graph)
-        if return_onnx:
-            return onnx_graph
 
 
 class BaseModel:
@@ -110,19 +47,6 @@ class BaseModel:
 
     def get_shape_dict(self, batch_size, image_height, image_width):
         return None
-
-    def optimize(self, onnx_graph):
-        opt = Optimizer(onnx_graph, verbose=self.verbose)
-        opt.info(self.name + ": original")
-        opt.cleanup()
-        opt.info(self.name + ": cleanup")
-        opt.fold_constants()
-        opt.info(self.name + ": fold constants")
-        opt.infer_shapes()
-        opt.info(self.name + ": shape inference")
-        onnx_opt_graph = opt.cleanup(return_onnx=True)
-        opt.info(self.name + ": finished")
-        return onnx_opt_graph
 
     def check_dims(self, batch_size, image_height, image_width):
         assert self.min_batch <= batch_size <= self.max_batch, f"Invalid batch_size: {self.min_batch=} <= {batch_size=} <= {self.max_batch=}"
@@ -203,21 +127,21 @@ class CLIP(BaseModel):
         self.check_dims(batch_size, image_height, image_width)
         return torch.zeros(batch_size, self.text_maxlen, dtype=torch.int32, device=self.device)
 
-    def optimize(self, onnx_graph):
-        opt = Optimizer(onnx_graph)
-        opt.info(self.name + ": original")
-        opt.select_outputs([0])  # delete graph output#1
-        opt.cleanup()
-        opt.info(self.name + ": remove output[1]")
-        opt.fold_constants()
-        opt.info(self.name + ": fold constants")
-        opt.infer_shapes()
-        opt.info(self.name + ": shape inference")
-        opt.select_outputs([0], names=["text_embeddings"])  # rename network output
-        opt.info(self.name + ": remove output[0]")
-        opt_onnx_graph = opt.cleanup(return_onnx=True)
-        opt.info(self.name + ": finished")
-        return opt_onnx_graph
+    # def optimize(self, onnx_graph):
+    #     opt = Optimizer(onnx_graph)
+    #     opt.info(self.name + ": original")
+    #     opt.select_outputs([0])  # delete graph output#1
+    #     opt.cleanup()
+    #     opt.info(self.name + ": remove output[1]")
+    #     opt.fold_constants()
+    #     opt.info(self.name + ": fold constants")
+    #     opt.infer_shapes()
+    #     opt.info(self.name + ": shape inference")
+    #     opt.select_outputs([0], names=["text_embeddings"])  # rename network output
+    #     opt.info(self.name + ": remove output[0]")
+    #     opt_onnx_graph = opt.cleanup(return_onnx=True)
+    #     opt.info(self.name + ": finished")
+    #     return opt_onnx_graph
 
 
 class UNet(BaseModel):
@@ -321,7 +245,7 @@ class UNetXLTurbo(BaseModel):
     def __init__(
         self,
         fp16=True,
-        device="mps",
+        device="cuda",
         max_batch_size=1,
         min_batch_size=1,
         encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo
@@ -430,12 +354,148 @@ class UNetXLTurbo(BaseModel):
         )
 
         # additional text embeds
-        add_text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device),
+        add_text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device)
 
         # time ids
-        add_time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device),
+        add_time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device)
 
         return sample_input, timestep_input, encoder_hidden_states_input, add_text_embeds, add_time_ids
+
+
+class UNetXLTurboIPAdapter(BaseModel):
+    def __init__(
+        self,
+        fp16=True,
+        device="cuda",
+        max_batch_size=1,
+        min_batch_size=1,
+        encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo
+        text_maxlen=77,                   # Updated for SDXL-Turbo
+        text_embeds_dim=1280,             # SDXL-Turbo-specific
+        time_ids_maxlen=6,                # SDXL-Turbo-specific
+        embedding_dim=768,
+        unet_dim=4
+    ):
+        super(UNetXLTurboIPAdapter, self).__init__(
+            fp16=fp16,
+            device=device,
+            max_batch_size=max_batch_size,
+            min_batch_size=min_batch_size,
+            embedding_dim=embedding_dim,
+            text_maxlen=text_maxlen,
+        )
+        self.unet_dim = unet_dim
+        self.encoder_hidden_states_dim = encoder_hidden_states_dim
+        self.text_embeds_dim = text_embeds_dim
+        self.time_ids_maxlen = time_ids_maxlen
+        self.name = "UNetXLTurboIPAdapter"
+
+    def get_input_names(self):
+        return ["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids", "image_embeds", "ip_adapter_scale"]
+
+    def get_output_names(self):
+        return ["latent"]
+
+    def get_dynamic_axes(self):
+        return None
+
+    def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        (
+            min_batch,
+            max_batch,
+            _,
+            _,
+            _,
+            _,
+            min_latent_height,
+            max_latent_height,
+            min_latent_width,
+            max_latent_width,
+        ) = self.get_minmax_dims(batch_size, image_height, image_width, static_batch, static_shape)
+        return {
+            "sample": [
+                (batch_size, self.unet_dim, min_latent_height, min_latent_width),
+                (batch_size, self.unet_dim, latent_height, latent_width),
+                (batch_size, self.unet_dim, max_latent_height, max_latent_width),
+            ],
+            "timestep": [
+                (min_batch,),
+                (batch_size,),
+                (max_batch,)
+            ],
+            "encoder_hidden_states": [
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+            ],
+            "text_embeds": [
+                (batch_size, self.text_embeds_dim),
+                (batch_size, self.text_embeds_dim),
+                (batch_size, self.text_embeds_dim),
+            ],
+            "time_ids": [
+                (batch_size, self.time_ids_maxlen),
+                (batch_size, self.time_ids_maxlen),
+                (batch_size, self.time_ids_maxlen),
+            ],
+            "image_embeds": [
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+            ],
+            "ip_adapter_scale": [
+                (1,),
+                (1,),
+                (1,)
+            ]
+        }
+
+    def get_shape_dict(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        return {
+            "sample": (batch_size, self.unet_dim, latent_height, latent_width),
+            "timestep": (1, 3),
+            "encoder_hidden_states": (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+            "text_embeds": (batch_size, self.text_embeds_dim),
+            "time_ids": (batch_size, self.time_ids_maxlen),
+            "image_embeds": (batch_size, 1, 4, self.encoder_hidden_states_dim),
+            "ip_adapter_scale": (1,),
+            "latent": (batch_size, self.unet_dim, latent_height, latent_width),
+        }
+
+    def get_sample_input(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        dtype = torch.float16 if self.fp16 else torch.float32
+
+        # input latent
+        sample_input = torch.randn(
+            batch_size, self.unet_dim, latent_height, latent_width, dtype=dtype, device=self.device
+        )
+
+        # timestep (allowing for 1 to 3 timesteps)
+        timestep_input = torch.randint(1, 4, (1,), dtype=torch.float32, device=self.device)
+
+        # encoder hidden states input
+        encoder_hidden_states_input = torch.randn(
+            batch_size, self.text_maxlen, self.encoder_hidden_states_dim, dtype=dtype, device=self.device
+        )
+
+        # additional text embeds
+        text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device)
+
+        # time ids
+        time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device)
+
+        # image embeds
+        image_embeds = torch.randn(
+            batch_size, 1, 4, self.encoder_hidden_states_dim, dtype=dtype, device=self.device
+        )
+
+        # ip_adapter_scale
+        ip_adapter_scale = torch.randint(1, 4, (1,), dtype=dtype, device=self.device)
+
+        return sample_input, timestep_input, encoder_hidden_states_input, text_embeds, time_ids, image_embeds, ip_adapter_scale
 
 
 class VAE(BaseModel):

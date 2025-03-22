@@ -114,7 +114,7 @@ class IPAdapterProjection:
         self.image_proj = None
 
         if hasattr(pipe.unet, "encoder_hid_proj"):
-            self.image_proj = pipe.unet.encoder_hid_proj
+            self.image_proj = pipe.unet.encoder_hid_proj.to(self.device, dtype=self.dtype)
 
     def __call__(self, image_embeds, text_embeds=None):
         """Project image embeddings and optionally text embeddings"""

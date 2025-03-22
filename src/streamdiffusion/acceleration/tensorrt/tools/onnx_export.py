@@ -44,7 +44,7 @@ class UNetXLIPAdapterWrapper(torch.nn.Module):
 
 def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_dir):
 
-    device = 'mps'
+    device = 'cuda'
     dtype = torch.float16
 
     # prepare SD pipeline

@@ -138,10 +138,11 @@ def accelerate_with_tensorrt(
     # wrap to handle add_cond_kwargs correctly for sdxl
     unet_class = UNet
     if is_sdxl:
+        unet_class = UNetXLTurbo
         if ip_adapter:
             unet_class = UNetXLTurboIPAdapter
-        else:
-            unet_class = UNetXLTurbo
+
+    print(f'Using UNET class: {unet_class}')
     unet_model = unet_class(
         fp16=True,
         device=stream.device,

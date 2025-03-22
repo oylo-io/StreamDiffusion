@@ -6,7 +6,6 @@ from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionX
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
-from streamdiffusion.acceleration.tensorrt.models import UNet, UNetXLTurbo, UNetXLTurboIPAdapter
 from streamdiffusion.ip_adapter import prepare_unet_for_onnx_export, patch_unet_ip_adapter_projection
 
 
@@ -100,19 +99,17 @@ def accelerate_pipeline(is_sdxl, model_id, ip_adapter, height, width, num_timest
     unet_batch_size = num_timesteps
 
     # wrap to handle add_cond_kwargs correctly for sdxl
-    unet_model_desc = UNet
     if is_sdxl:
         if ip_adapter:
             pipe.unet = UNetXLIPAdapterWrapper(pipe.unet)
-            unet_model_desc = UNetXLTurboIPAdapter
         else:
             pipe.unet = UNetXLWrapper(pipe.unet)
-            unet_model_desc = UNetXLTurbo
 
     # build models
     accelerate_with_tensorrt(
         stream=stream,
-        unet_class=unet_model_desc,
+        is_sdxl=is_sdxl,
+        ip_adapter=ip_adapter,
         engine_dir=str(export_dir),
         unet_batch_size=(unet_batch_size, unet_batch_size),
         vae_batch_size=(vae_batch_size, vae_batch_size),
@@ -140,12 +137,8 @@ def accelerate_pipeline(is_sdxl, model_id, ip_adapter, height, width, num_timest
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Accelerate Pipeline with TRT")
-    parser.add_argument('--sdxl',
-                        type=bool, default=False)
     parser.add_argument('--model_id',
                         type=str, default='stabilityai/sd-turbo')
-    # parser.add_argument('--vae_id',
-    #                     type=str, default='madebyollin/taesd')
     parser.add_argument('--export_dir',
                         type=Path, required=True, help='Directory for generated models')
     parser.add_argument('--height',
@@ -154,6 +147,7 @@ if __name__ == "__main__":
                         type=int, required=True, help='image width')
     parser.add_argument('--num_timesteps',
                         type=int, default=1, help='number of timesteps')
+    parser.add_argument('--sdxl', default=False, action='store_true')
     parser.add_argument('--ip_adapter', default=False, action='store_true')
 
     args = parser.parse_args()

@@ -11,7 +11,7 @@ from polygraphy import cuda
 from ...pipeline import StreamDiffusion
 from .builder import EngineBuilder, create_onnx_path
 from .engine import AutoencoderKLEngine, UNet2DConditionModelEngine
-from .models import VAE, BaseModel, UNet, VAEEncoder, UNetXLTurbo
+from .models import BaseModel, VAE, VAEEncoder, UNet, UNetXLTurbo, UNetXLTurboIPAdapter
 
 
 class TorchVAEEncoder(torch.nn.Module):
@@ -91,13 +91,14 @@ def compile_unet(
 
 def accelerate_with_tensorrt(
     stream: StreamDiffusion,
-    unet_class: type,
     engine_dir: str,
     unet_batch_size: tuple = (1, 2),
     vae_batch_size: tuple = (1, 1),
     unet_engine_build_options=None,
     vae_engine_build_options=None,
     use_cuda_graph: bool = False,
+    is_sdxl = False,
+    ip_adapter = False
 ):
     # argument default values should not be mutable
     if vae_engine_build_options is None:
@@ -134,6 +135,13 @@ def accelerate_with_tensorrt(
     vae_encoder_engine_path = f"{engine_dir}/vae_encoder.engine"
     vae_decoder_engine_path = f"{engine_dir}/vae_decoder.engine"
 
+    # wrap to handle add_cond_kwargs correctly for sdxl
+    unet_class = UNet
+    if is_sdxl:
+        if ip_adapter:
+            unet_class = UNetXLTurboIPAdapter
+        else:
+            unet_class = UNetXLTurbo
     unet_model = unet_class(
         fp16=True,
         device=stream.device,

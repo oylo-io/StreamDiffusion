@@ -5,7 +5,7 @@ import torch
 from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from streamdiffusion import StreamDiffusion
-from streamdiffusion.acceleration.tensorrt import accelerate_with_tensorrt
+from streamdiffusion.acceleration.tensorrt.compile import accelerate_with_tensorrt
 from streamdiffusion.ip_adapter import prepare_unet_for_onnx_export, patch_unet_ip_adapter_projection
 
 

@@ -4,7 +4,6 @@ from pathlib import Path
 import torch
 from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
-from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt.models import UNetXLTurboIPAdapter
 from streamdiffusion.ip_adapter import prepare_unet_for_onnx_export, patch_unet_ip_adapter_projection
 
@@ -45,7 +44,7 @@ class UNetXLIPAdapterWrapper(torch.nn.Module):
 
 def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_dir):
 
-    device = 'cuda'
+    device = 'mps'
     dtype = torch.float16
 
     # prepare SD pipeline
@@ -60,7 +59,7 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
     vae = AutoencoderTiny.from_pretrained(
         vae_model_id,
         torch_dtype=dtype
-    ).to('cuda')
+    ).to(device)
 
     # load pipeline
     print(f'Loading Pipeline {pipe_type}')
@@ -69,7 +68,7 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
         torch_dtype=torch.float16,
         variant='fp16' if is_sdxl else None,
         vae=vae
-    ).to('cuda')
+    ).to(device)
 
     # load ip adapter
     if ip_adapter and is_sdxl:
@@ -86,17 +85,6 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
         prepare_unet_for_onnx_export(pipe)
         patch_unet_ip_adapter_projection(pipe)
 
-    # StreamDiffusion
-    stream = StreamDiffusion(
-        pipe,
-        device=device,
-        t_index_list=list(range(num_timesteps)),
-        original_inference_steps=100,
-        torch_dtype=dtype,
-        height=height,
-        width=width
-    )
-
     # Set batch sizes
     vae_batch_size = 1
     unet_batch_size = num_timesteps
@@ -109,47 +97,20 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
             pipe.unet = UNetXLWrapper(pipe.unet)
 
     # export to onnx
-    with torch.inference_mode(), torch.autocast("cuda"):
-        model_data = UNetXLTurboIPAdapter()
+    with torch.inference_mode():
+        model_data = UNetXLTurboIPAdapter(device=device)
         inputs = model_data.get_sample_input(unet_batch_size, height, width)
         torch.onnx.export(
             pipe.unet,
             inputs,
-            export_dir / 'unet.onnx',
-            export_params=True,
-            opset_version=20,
+            str(export_dir / 'unet.onnx'),
             input_names=model_data.get_input_names(),
             output_names=model_data.get_output_names(),
             dynamic_axes=model_data.get_dynamic_axes(),
+            opset_version=20,
+            export_params=True,
+            operator_export_type=torch.onnx.OperatorExportTypes.ONNX_FALLTHROUGH
         )
-
-    # build models
-    # accelerate_with_tensorrt(
-    #     stream=stream,
-    #     is_sdxl=is_sdxl,
-    #     ip_adapter=ip_adapter,
-    #     engine_dir=str(export_dir),
-    #     unet_batch_size=(unet_batch_size, unet_batch_size),
-    #     vae_batch_size=(vae_batch_size, vae_batch_size),
-    #     unet_engine_build_options={
-    #         'opt_image_height': height,
-    #         'opt_image_width': width,
-    #         'min_image_resolution': min(height, width),
-    #         'max_image_resolution': max(height, width),
-    #         'opt_batch_size': unet_batch_size,
-    #         'build_static_batch': True,
-    #         'build_dynamic_shape': False
-    #     },
-    #     vae_engine_build_options={
-    #         'opt_image_height': height,
-    #         'opt_image_width': width,
-    #         'min_image_resolution': min(height, width),
-    #         'max_image_resolution': max(height, width),
-    #         'opt_batch_size': vae_batch_size,
-    #         'build_static_batch': True,
-    #         'build_dynamic_shape': False
-    #     }
-    # )
 
 
 if __name__ == "__main__":
@@ -170,18 +131,15 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # verify dir
+    Path(args.export_dir).mkdir(parents=True, exist_ok=True)
+
     export(
         args.sdxl,
         args.model_id,
-        # args.vae_id,
         args.ip_adapter,
         args.height,
         args.width,
         args.num_timesteps,
         args.export_dir
     )
-
-# Usage:
-# docker run -it --rm --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface -v ~/oylo/models:/root/app/engines builder
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py --height 512 --width 904 --num_timesteps 2 --export_dir /root/app/engines/sd-turbo_b2
-# python3 src/streamdiffusion/acceleration/tensorrt/build.py --model_id stabilityai/sdxl-turbo --height 512 --width 904 --num_timesteps 1 --export_dir /root/app/engines/sdxl-turbo --sdxl True

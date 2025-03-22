@@ -3,9 +3,7 @@ import os
 
 import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import (
-    retrieve_latents,
-)
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from polygraphy import cuda
 
 from ...pipeline import StreamDiffusion

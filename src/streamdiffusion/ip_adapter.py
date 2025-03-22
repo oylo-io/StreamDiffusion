@@ -3,42 +3,8 @@ from typing import Optional, Union, List
 import torch
 from diffusers.models.attention_processor import IPAdapterAttnProcessor, IPAdapterAttnProcessor2_0, Attention
 
-class TensorIPAdapterScaleExtractor:
 
-    def get_scale(self, ip_adapter_scale, scale_list):
-
-        # result
-        result_scale = scale_list
-
-        # If ip_adapter_scale is provided, update self.scale
-        if ip_adapter_scale is not None:
-            num_adapters = len(scale_list)
-
-            # Handle tensor input
-            if isinstance(ip_adapter_scale, torch.Tensor):
-                # Single value tensor for all adapters
-                if ip_adapter_scale.numel() == 1:
-                    result_scale = [ip_adapter_scale.item()] * num_adapters
-                # Tensor with one value per adapter
-                elif ip_adapter_scale.numel() == num_adapters:
-                    result_scale = [ip_adapter_scale[i].item() for i in range(num_adapters)]
-                else:
-                    raise ValueError(
-                        f"ip_adapter_scale tensor has {ip_adapter_scale.numel()} elements, but expected {num_adapters}")
-
-            # Handle float or list inputs
-            elif not isinstance(ip_adapter_scale, list):
-                result_scale = [ip_adapter_scale] * num_adapters
-            elif len(ip_adapter_scale) == num_adapters:
-                result_scale = ip_adapter_scale
-            else:
-                raise ValueError(
-                    f"ip_adapter_scale list has {len(ip_adapter_scale)} elements, but expected {num_adapters}")
-
-        return result_scale
-
-
-class TensorIPAdapterAttnProcessor(IPAdapterAttnProcessor, TensorIPAdapterScaleExtractor):
+class TensorIPAdapterAttnProcessor(IPAdapterAttnProcessor):
 
     def __call__(
             self,
@@ -63,8 +29,7 @@ class TensorIPAdapterAttnProcessor(IPAdapterAttnProcessor, TensorIPAdapterScaleE
             ip_adapter_masks=ip_adapter_masks
         )
 
-
-class TensorIPAdapterAttnProcessor2_0(IPAdapterAttnProcessor2_0, TensorIPAdapterScaleExtractor):
+class TensorIPAdapterAttnProcessor2_0(IPAdapterAttnProcessor2_0):
     """
     ONNX-compatible version of IPAdapterAttnProcessor2_0 that accepts tensor scales
     """
@@ -92,7 +57,6 @@ class TensorIPAdapterAttnProcessor2_0(IPAdapterAttnProcessor2_0, TensorIPAdapter
             temb=temb,
             ip_adapter_masks=ip_adapter_masks
         )
-
 
 # Create a mapping from original processor types to ONNX-compatible versions
 processor_mapping = {
@@ -139,3 +103,51 @@ def prepare_unet_for_onnx_export(pipe):
 
     # set all processors to the model
     pipe.unet.set_attn_processor(all_processors)
+
+
+class IPAdapterProjection:
+    def __init__(self, pipe):
+        self.device = pipe.device
+        self.dtype = pipe.unet.dtype
+
+        # Extract the projection layers from UNet
+        self.image_proj = None
+
+        if hasattr(pipe.unet, "encoder_hid_proj"):
+            self.image_proj = pipe.unet.encoder_hid_proj
+
+    def __call__(self, image_embeds, text_embeds=None):
+        """Project image embeddings and optionally text embeddings"""
+        projected_image_embeds = None
+
+        if self.image_proj is not None and image_embeds is not None:
+            projected_image_embeds = self.image_proj(image_embeds.to(self.device, dtype=self.dtype))
+
+        return projected_image_embeds
+
+
+def patch_unet_ip_adapter_projection(pipe):
+
+    # Save the original method
+    original_process_encoder_hidden_states = pipe.unet.process_encoder_hidden_states
+
+    # Define the replacement method
+    def patched_process_encoder_hidden_states(self, encoder_hidden_states, added_cond_kwargs):
+
+        # Check if pre-projected embeddings are provided
+        if "image_embeds" in added_cond_kwargs:
+
+            # Use pre-projected image embeddings directly
+            image_embeds = added_cond_kwargs["image_embeds"]
+
+            # Return tuple format expected by attention processors
+            return encoder_hidden_states, image_embeds
+        else:
+
+            # Fall back to original method for other cases
+            return original_process_encoder_hidden_states(self, encoder_hidden_states, added_cond_kwargs)
+
+    # Apply the monkey patch
+    pipe.unet.process_encoder_hidden_states = patched_process_encoder_hidden_states.__get__(pipe.unet)
+
+    return original_process_encoder_hidden_states

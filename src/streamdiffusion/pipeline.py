@@ -12,6 +12,7 @@ from diffusers import LCMScheduler, StableDiffusionPipeline, StableDiffusionXLPi
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 
 from streamdiffusion.image_filter import SimilarImageFilter
+from streamdiffusion.ip_adapter import IPAdapterProjection
 
 
 class StreamDiffusion:
@@ -107,6 +108,9 @@ class StreamDiffusion:
 
             # advanced prompt encoding
             self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
+
+            # ip adapter
+            self.ip_adapter_projector = IPAdapterProjection(pipe)
 
         # mark SDXL mode
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
@@ -275,28 +279,27 @@ class StreamDiffusion:
             raise ValueError(
                 "The pipeline doesn't have an image_encoder. Make sure IP-Adapter is properly loaded.")
 
-        # Use the pipeline's image processing methods directly
-        if hasattr(self.pipe, "feature_extractor") and self.pipe.feature_extractor is not None:
+        if not hasattr(self.pipe, "feature_extractor") or self.pipe.feature_extractor is None:
+            raise ValueError(
+                "The pipeline doesn't have an feature_extractor. Make sure IP-Adapter is properly loaded.")
 
-            # Process the image using the pipeline's feature extractor
-            if not isinstance(image, list):
-                image = [image]
+        # Process the image using the pipeline's feature extractor
+        if not isinstance(image, list):
+            image = [image]
 
-            # Process the image
-            image = self.pipe.feature_extractor(
-                images=image,
-                return_tensors="pt",
-            ).pixel_values.to(device=self.device, dtype=self.dtype)
+        # Process the image
+        image = self.pipe.feature_extractor(
+            images=image,
+            return_tensors="pt",
+        ).pixel_values.to(device=self.device, dtype=self.dtype)
 
-            # Generate image embeddings using the pipeline's image encoder
-            image_embeds = self.pipe.image_encoder(image).image_embeds
+        # Generate image embeddings using the pipeline's image encoder
+        image_embeds = self.pipe.image_encoder(image).image_embeds
 
-            # Store the image embeddings in the format expected by IP-Adapter
-            self.ip_adapter_image_embeds = image_embeds
+        projected_image_embeds = self.ip_adapter_projector(image_embeds)
 
-            print(f"Generated image embeddings with shape: {image_embeds.shape}")
-        else:
-            raise ValueError("Feature extractor not found. IP-Adapter may not be properly loaded.")
+        # Store the image embeddings in the format expected by IP-Adapter
+        self.ip_adapter_image_embeds = projected_image_embeds
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
@@ -396,9 +399,9 @@ class StreamDiffusion:
         model_pred = self.unet(
             x_t_latent_plus_uc,
             t_list,
-            cross_attention_kwargs=cross_attention_kwargs,
             encoder_hidden_states=self.prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
+            cross_attention_kwargs=cross_attention_kwargs,
             return_dict=False,
         )[0]
 

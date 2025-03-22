@@ -438,6 +438,142 @@ class UNetXLTurbo(BaseModel):
         return sample_input, timestep_input, encoder_hidden_states_input, add_text_embeds, add_time_ids
 
 
+class UNetXLTurboIPAdapter(BaseModel):
+    def __init__(
+        self,
+        fp16=True,
+        device="mps",
+        max_batch_size=1,
+        min_batch_size=1,
+        encoder_hidden_states_dim=2048,   # Updated for SDXL-Turbo
+        text_maxlen=77,                   # Updated for SDXL-Turbo
+        text_embeds_dim=1280,             # SDXL-Turbo-specific
+        time_ids_maxlen=6,                # SDXL-Turbo-specific
+        embedding_dim=768,
+        unet_dim=4
+    ):
+        super(UNetXLTurboIPAdapter, self).__init__(
+            fp16=fp16,
+            device=device,
+            max_batch_size=max_batch_size,
+            min_batch_size=min_batch_size,
+            embedding_dim=embedding_dim,
+            text_maxlen=text_maxlen,
+        )
+        self.unet_dim = unet_dim
+        self.encoder_hidden_states_dim = encoder_hidden_states_dim
+        self.text_embeds_dim = text_embeds_dim
+        self.time_ids_maxlen = time_ids_maxlen
+        self.name = "UNetXLTurboIPAdapter"
+
+    def get_input_names(self):
+        return ["sample", "timestep", "encoder_hidden_states", "text_embeds", "time_ids", "image_embeds", "ip_adapter_scale"]
+
+    def get_output_names(self):
+        return ["latent"]
+
+    def get_dynamic_axes(self):
+        return None
+
+    def get_input_profile(self, batch_size, image_height, image_width, static_batch, static_shape):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        (
+            min_batch,
+            max_batch,
+            _,
+            _,
+            _,
+            _,
+            min_latent_height,
+            max_latent_height,
+            min_latent_width,
+            max_latent_width,
+        ) = self.get_minmax_dims(batch_size, image_height, image_width, static_batch, static_shape)
+        return {
+            "sample": [
+                (batch_size, self.unet_dim, min_latent_height, min_latent_width),
+                (batch_size, self.unet_dim, latent_height, latent_width),
+                (batch_size, self.unet_dim, max_latent_height, max_latent_width),
+            ],
+            "timestep": [
+                (min_batch,),
+                (batch_size,),
+                (max_batch,)
+            ],
+            "encoder_hidden_states": [
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+                (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+            ],
+            "text_embeds": [
+                (batch_size, self.text_embeds_dim),
+                (batch_size, self.text_embeds_dim),
+                (batch_size, self.text_embeds_dim),
+            ],
+            "time_ids": [
+                (batch_size, self.time_ids_maxlen),
+                (batch_size, self.time_ids_maxlen),
+                (batch_size, self.time_ids_maxlen),
+            ],
+            "image_embeds": [
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+                (batch_size, 1, 4, self.encoder_hidden_states_dim),
+            ],
+            "ip_adapter_scale": [
+                (1,),
+                (1,),
+                (1,)
+            ]
+        }
+
+    def get_shape_dict(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        return {
+            "sample": (batch_size, self.unet_dim, latent_height, latent_width),
+            "timestep": (1, 3),
+            "encoder_hidden_states": (batch_size, self.text_maxlen, self.encoder_hidden_states_dim),
+            "text_embeds": (batch_size, self.text_embeds_dim),
+            "time_ids": (batch_size, self.time_ids_maxlen),
+            "image_embeds": (batch_size, 1, 4, self.encoder_hidden_states_dim),
+            "ip_adapter_scale": (1,),
+            "latent": (batch_size, self.unet_dim, latent_height, latent_width),
+        }
+
+    def get_sample_input(self, batch_size, image_height, image_width):
+        latent_height, latent_width = self.check_dims(batch_size, image_height, image_width)
+        dtype = torch.float16 if self.fp16 else torch.float32
+
+        # input latent
+        sample_input = torch.randn(
+            batch_size, self.unet_dim, latent_height, latent_width, dtype=dtype, device=self.device
+        )
+
+        # timestep (allowing for 1 to 3 timesteps)
+        timestep_input = torch.randint(1, 4, (1,), dtype=torch.float32, device=self.device)
+
+        # encoder hidden states input
+        encoder_hidden_states_input = torch.randn(
+            batch_size, self.text_maxlen, self.encoder_hidden_states_dim, dtype=dtype, device=self.device
+        )
+
+        # additional text embeds
+        text_embeds = torch.randn(batch_size, self.text_embeds_dim, dtype=dtype, device=self.device)
+
+        # time ids
+        time_ids = torch.randint(0, 1000, (batch_size, self.time_ids_maxlen), dtype=torch.int32, device=self.device)
+
+        # image embeds
+        image_embeds = torch.randn(
+            batch_size, 1, 4, self.encoder_hidden_states_dim, dtype=dtype, device=self.device
+        )
+
+        # timestep (allowing for 1 to 3 timesteps)
+        ip_adapter_scale = torch.randint(1, 4, (1,), dtype=dtype, device=self.device)
+
+        return sample_input, timestep_input, encoder_hidden_states_input, text_embeds, time_ids, image_embeds, ip_adapter_scale
+
+
 class VAE(BaseModel):
     def __init__(self, device, max_batch_size, min_batch_size=1):
         super(VAE, self).__init__(

@@ -87,7 +87,7 @@ stream.generate_image_embedding(black_image)
 prompt = "ibex, high quality, best quality"
 
 # Loop through different scales
-ip_scales = [0.0] # [0.6, 0.7, 0.8, 0.9]
+ip_scales = [0.6, 0.7, 0.8, 0.9]
 strengths = [0.4, 0.5, 0.6, 0.7]
 all_images = []
 

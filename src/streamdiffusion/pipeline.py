@@ -108,19 +108,8 @@ class StreamDiffusion:
             # advanced prompt encoding
             self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
 
+        # mark SDXL mode
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
-
-        # override compel if we're in SDXL mode
-        if self.sdxl:
-
-            # For SDXL-Turbo, we use ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED
-            # We need pooled embeddings too
-            self.compel = Compel(
-                tokenizer=pipe.tokenizer,
-                text_encoder=pipe.text_encoder,
-                # returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                # requires_pooled=True
-            )
 
     def load_lora(
         self,
@@ -165,15 +154,12 @@ class StreamDiffusion:
     @torch.inference_mode()
     def prepare(
         self,
-        prompt: str,
-        negative_prompt: str = "",
         num_inference_steps: int = 50,
-        guidance_scale: float = 1.2,
-        delta: float = 1.0,
-        strength: float = 1.0,
         generator: Optional[torch.Generator] = torch.Generator(),
-        seed: int = 2,
+        seed: int = 1,
     ) -> None:
+
+        # init generator (with seed)
         self.generator = generator
         self.generator.manual_seed(seed)
 
@@ -192,23 +178,24 @@ class StreamDiffusion:
         else:
             self.x_t_latent_buffer = None
 
-        if self.cfg_type == "none":
-            self.guidance_scale = 1.0
-        else:
-            self.guidance_scale = guidance_scale
-        self.delta = delta
+        # if self.cfg_type == "none":
+        #     self.guidance_scale = 1.0
+        # else:
+        #     self.guidance_scale = guidance_scale
+        # self.delta = delta
 
-        # update prompt
-        if prompt:
-            self.update_prompt(prompt)
+        # init empty text prompt
+        if self.prompt_embeds is None:
+            self.update_prompt('')
 
-        # update image prompt
+        # init empty image prompt
         if self.ip_adapter_image_embeds is None:
             black_image = PIL.Image.new('RGB', (224, 224), color=0)
             self.generate_image_embedding(black_image)
             self.ip_adapter_scale = 0.0
 
-        self.scheduler.set_timesteps(num_inference_steps, self.device, strength=strength)
+        # init timesteps
+        self.scheduler.set_timesteps(num_inference_steps, self.device)
         self.timesteps = self.scheduler.timesteps.to(self.device)
 
         # make sub timesteps list based on the indices in the t_list list and the values in the timesteps list
@@ -225,13 +212,14 @@ class StreamDiffusion:
             dim=0,
         )
 
+        # init noise
         self.init_noise = torch.randn(
             (self.batch_size, 4, self.latent_height, self.latent_width),
             generator=generator,
         ).to(device=self.device, dtype=self.dtype)
-
         self.stock_noise = torch.zeros_like(self.init_noise)
 
+        # mystical things
         c_skip_list = []
         c_out_list = []
         for timestep in self.sub_timesteps:
@@ -407,43 +395,44 @@ class StreamDiffusion:
         added_cond_kwargs,
         idx: Optional[int] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
-            x_t_latent_plus_uc = torch.concat([x_t_latent[0:1], x_t_latent], dim=0)
-            t_list = torch.concat([t_list[0:1], t_list], dim=0)
-        elif self.guidance_scale > 1.0 and (self.cfg_type == "full"):
-            x_t_latent_plus_uc = torch.concat([x_t_latent, x_t_latent], dim=0)
-            t_list = torch.concat([t_list, t_list], dim=0)
-        else:
-            x_t_latent_plus_uc = x_t_latent
+        # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
+        #     x_t_latent_plus_uc = torch.concat([x_t_latent[0:1], x_t_latent], dim=0)
+        #     t_list = torch.concat([t_list[0:1], t_list], dim=0)
+        # elif self.guidance_scale > 1.0 and (self.cfg_type == "full"):
+        #     x_t_latent_plus_uc = torch.concat([x_t_latent, x_t_latent], dim=0)
+        #     t_list = torch.concat([t_list, t_list], dim=0)
+        # else:
+        x_t_latent_plus_uc = x_t_latent
 
         model_pred = self.unet(
             x_t_latent_plus_uc,
             t_list,
-            cross_attention_kwargs={"ip_adapter_scale": torch.tensor([0.8888], device=self.device)},
+            cross_attention_kwargs={"ip_adapter_scale": torch.tensor([0.8888], device=self.device, dtype=torch.float16)},
             encoder_hidden_states=self.prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
         )[0]
 
-        if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
-            noise_pred_text = model_pred[1:]
-            self.stock_noise = torch.concat(
-                [model_pred[0:1], self.stock_noise[1:]], dim=0
-            )  # ここコメントアウトでself out cfg
-        elif self.guidance_scale > 1.0 and (self.cfg_type == "full"):
-            noise_pred_uncond, noise_pred_text = model_pred.chunk(2)
-        else:
-            noise_pred_text = model_pred
-        if self.guidance_scale > 1.0 and (
-            self.cfg_type == "self" or self.cfg_type == "initialize"
-        ):
-            noise_pred_uncond = self.stock_noise * self.delta
-        if self.guidance_scale > 1.0 and self.cfg_type != "none":
-            model_pred = noise_pred_uncond + self.guidance_scale * (
-                noise_pred_text - noise_pred_uncond
-            )
-        else:
-            model_pred = noise_pred_text
+        # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
+        #     noise_pred_text = model_pred[1:]
+        #     self.stock_noise = torch.concat(
+        #         [model_pred[0:1], self.stock_noise[1:]], dim=0
+        #     )  # ここコメントアウトでself out cfg
+        # elif self.guidance_scale > 1.0 and (self.cfg_type == "full"):
+        #     noise_pred_uncond, noise_pred_text = model_pred.chunk(2)
+        # else:
+        noise_pred_text = model_pred
+
+        # if self.guidance_scale > 1.0 and (
+        #     self.cfg_type == "self" or self.cfg_type == "initialize"
+        # ):
+        #     noise_pred_uncond = self.stock_noise * self.delta
+        # if self.guidance_scale > 1.0 and self.cfg_type != "none":
+        #     model_pred = noise_pred_uncond + self.guidance_scale * (
+        #         noise_pred_text - noise_pred_uncond
+        #     )
+        # else:
+        model_pred = noise_pred_text
 
         # compute the previous noisy sample x_t -> x_t-1
         if self.use_denoising_batch:

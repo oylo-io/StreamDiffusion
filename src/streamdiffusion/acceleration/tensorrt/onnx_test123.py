@@ -115,7 +115,7 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
         torch.onnx.export(
             pipe.unet,
             inputs,
-            '/tmp/onnx_export/',
+            export_dir / 'unet.onnx',
             export_params=True,
             opset_version=20,
             input_names=model_data.get_input_names(),

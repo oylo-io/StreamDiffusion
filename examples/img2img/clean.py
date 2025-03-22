@@ -101,11 +101,13 @@ for ip in ip_scales:
         stream.t_list = [99 - int(100 * s)]
         stream.denoising_steps_num = len(stream.t_list)
         stream.prepare(
-            prompt=prompt,
             num_inference_steps=100,
-            guidance_scale=0.0,
-            seed=int(123)
+            seed=123
         )
+
+        # prepare prompts
+        stream.update_prompt(prompt)
+        stream.update_prompt(prompt)
 
         print(f'Generating for {ip=}, {s=}')
         for _ in range(stream.denoising_steps_num - 1):

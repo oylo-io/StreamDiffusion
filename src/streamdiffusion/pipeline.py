@@ -270,12 +270,7 @@ class StreamDiffusion:
 
     @torch.inference_mode()
     def generate_image_embedding(self, image: Union[torch.Tensor, PIL.Image.Image, np.ndarray]) -> None:
-        """
-        Generate image embeddings for IP-Adapter from a reference image.
 
-        Args:
-            image: A reference image to control generation. Can be a PIL Image, tensor, or numpy array.
-        """
         if not hasattr(self.pipe, "image_encoder") or self.pipe.image_encoder is None:
             raise ValueError(
                 "The pipeline doesn't have an image_encoder. Make sure IP-Adapter is properly loaded.")
@@ -304,6 +299,10 @@ class StreamDiffusion:
             raise ValueError("Feature extractor not found. IP-Adapter may not be properly loaded.")
 
     @torch.inference_mode()
+    def set_image_prompt_scale(self, scale: float):
+        self.ip_adapter_scale = torch.tensor([scale], device=self.device, dtype=self.dtype)
+
+    @torch.inference_mode()
     def generate_prompt_embeddings(self, prompt: str):
         return self.pipe.encode_prompt(
             prompt=prompt,
@@ -312,9 +311,10 @@ class StreamDiffusion:
             do_classifier_free_guidance=False,
         )
 
+    @torch.inference_mode()
     def update_prompt(self, prompt: str) -> None:
 
-        # Get embeddings from Compel
+        # get embeddings
         embeds = self.generate_prompt_embeddings(prompt) # self.compel(prompt)
 
         if not self.sdxl:
@@ -341,18 +341,6 @@ class StreamDiffusion:
                 dtype=self.prompt_embeds.dtype,
                 text_encoder_projection_dim=int(self.add_text_embeds.shape[-1]),
             )
-
-        # if self.use_denoising_batch and self.cfg_type == "full":
-        #     uncond_prompt_embeds = encoder_output[1].repeat(self.batch_size, 1, 1)
-        # elif self.cfg_type == "initialize":
-        #     uncond_prompt_embeds = encoder_output[1].repeat(self.frame_bff_size, 1, 1)
-        #
-        # if self.guidance_scale > 1.0 and (
-        #         self.cfg_type == "initialize" or self.cfg_type == "full"
-        # ):
-        #     self.prompt_embeds = torch.cat(
-        #         [uncond_prompt_embeds, self.prompt_embeds], dim=0
-        #     )
 
     def add_noise(
         self,
@@ -393,6 +381,7 @@ class StreamDiffusion:
         x_t_latent: torch.Tensor,
         t_list: Union[torch.Tensor, list[int]],
         added_cond_kwargs,
+        cross_attention_kwargs,
         idx: Optional[int] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
@@ -407,7 +396,7 @@ class StreamDiffusion:
         model_pred = self.unet(
             x_t_latent_plus_uc,
             t_list,
-            cross_attention_kwargs={"ip_adapter_scale": torch.tensor([0.8888], device=self.device, dtype=torch.float16)},
+            cross_attention_kwargs=cross_attention_kwargs,
             encoder_hidden_states=self.prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             return_dict=False,
@@ -508,30 +497,20 @@ class StreamDiffusion:
 
     def predict_x0_batch(self, x_t_latent: torch.Tensor) -> torch.Tensor:
         added_cond_kwargs = {}
+        cross_attention_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
 
         # Set the IP-Adapter scale directly on the pipe BEFORE inference
         # This is the critical step that was missing
-        if hasattr(self, "ip_adapter_scale") and self.ip_adapter_scale is not None:
-
-            # This sets the scale on the UNet's attention processors directly
-            self.pipe.set_ip_adapter_scale(self.ip_adapter_scale)
-
-        # Add IP-Adapter embeddings if available
-        if self.ip_adapter_image_embeds is not None:
-
-            # Add the image embeddings to added_cond_kwargs
+        if self.ip_adapter_scale is not None and self.ip_adapter_image_embeds is not None:
             added_cond_kwargs["image_embeds"] = self.ip_adapter_image_embeds
-
-            # Add the scale for IP-Adapter if it's needed by the implementation
-            if hasattr(self.pipe, "config") and getattr(self.pipe.config, "requires_adapter_scale", False):
-                added_cond_kwargs["adapter_scale"] = self.ip_adapter_scale
+            cross_attention_kwargs["ip_adapter_scale"] = self.ip_adapter_scale
 
         # Handle SDXL specific added conditions
         if self.sdxl:
             base_added_cond_kwargs = {
-                "text_embeds": self.add_text_embeds.to(self.device),
-                "time_ids": self.add_time_ids.to(self.device)
+                "text_embeds": self.add_text_embeds,
+                "time_ids": self.add_time_ids
             }
             added_cond_kwargs.update(base_added_cond_kwargs)
 
@@ -545,7 +524,12 @@ class StreamDiffusion:
 
             x_t_latent = x_t_latent.to(self.device)
             t_list = t_list.to(self.device)
-            x_0_pred_batch, model_pred = self.unet_step(x_t_latent, t_list, added_cond_kwargs=added_cond_kwargs)
+            x_0_pred_batch, model_pred = self.unet_step(
+                x_t_latent,
+                t_list,
+                added_cond_kwargs=added_cond_kwargs,
+                cross_attention_kwargs=cross_attention_kwargs
+            )
 
             if self.denoising_steps_num > 1:
                 x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)

@@ -60,7 +60,7 @@ def accelerate_pipeline(is_sdxl, model_id, ip_adapter, height, width, num_timest
     ).to('cuda')
 
     # load pipeline
-    print(f'Loading Pipeline {type(pipe_type)}')
+    print(f'Loading Pipeline {pipe_type}')
     pipe = pipe_type.from_pretrained(
         model_id,
         torch_dtype=torch.float16,

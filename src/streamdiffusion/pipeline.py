@@ -292,14 +292,19 @@ class StreamDiffusion:
             images=image,
             return_tensors="pt",
         ).pixel_values.to(device=self.device, dtype=self.dtype)
+        print(f'{image=}')
 
         # Generate image embeddings using the pipeline's image encoder
         image_embeds = self.pipe.image_encoder(image).image_embeds
+        print(f'{image_embeds=}')
 
+        # projecting image embedding through ip adapter weights
         projected_image_embeds = self.ip_adapter_projector(image_embeds)
+        print(f'{projected_image_embeds=}')
 
         # Store the image embeddings in the format expected by IP-Adapter
         self.ip_adapter_image_embeds = projected_image_embeds
+        print(f'{self.ip_adapter_image_embeds=}')
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):

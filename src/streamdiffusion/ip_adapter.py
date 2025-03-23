@@ -76,7 +76,7 @@ processor_mapping = {
 
 def prepare_unet_for_onnx_export(pipe):
 
-    # Get all the processors - this returns a copy, not the actual dictionary
+    # Get all the processors
     processors = pipe.unet.attn_processors
 
     # We need to include ALL processors in our update, not just the ones we're changing
@@ -105,8 +105,8 @@ def prepare_unet_for_onnx_export(pipe):
 
             # Copy weights
             for i in range(len(processor.to_k_ip)):
-                new_processor.to_k_ip[i].weight.data.copy_(processor.to_k_ip[i].weight.data)
-                new_processor.to_v_ip[i].weight.data.copy_(processor.to_v_ip[i].weight.data)
+                new_processor.to_k_ip[i].weight.data.copy_(processor.to_k_ip[i].weight.data.to(dtype=pipe.unet.dtype))
+                new_processor.to_v_ip[i].weight.data.copy_(processor.to_v_ip[i].weight.data.to(dtype=pipe.unet.dtype))
 
             # store the new processor
             all_processors[key] = new_processor

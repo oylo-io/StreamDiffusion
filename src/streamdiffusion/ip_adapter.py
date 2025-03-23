@@ -105,8 +105,13 @@ def prepare_unet_for_onnx_export(pipe):
 
             # Copy weights
             for i in range(len(processor.to_k_ip)):
-                new_processor.to_k_ip[i].weight.data.copy_(processor.to_k_ip[i].weight.data.to(dtype=pipe.unet.dtype))
-                new_processor.to_v_ip[i].weight.data.copy_(processor.to_v_ip[i].weight.data.to(dtype=pipe.unet.dtype))
+                print(f'Source to_k_ip weights: {processor.to_k_ip[i].weight.data.dtype}')
+                new_processor.to_k_ip[i].weight.data = processor.to_k_ip[i].weight.data.to(dtype=pipe.unet.dtype)
+                print(f'Copied to_k_ip weights: {new_processor.to_k_ip[i].weight.data.dtype}')
+
+                print(f'Source to_v_ip weights: {processor.to_v_ip[i].weight.data.dtype}')
+                new_processor.to_v_ip[i].weight.data = processor.to_v_ip[i].weight.data.to(dtype=pipe.unet.dtype)
+                print(f'Copied to_v_ip weights: {new_processor.to_v_ip[i].weight.data.dtype}')
 
             # store the new processor
             all_processors[key] = new_processor

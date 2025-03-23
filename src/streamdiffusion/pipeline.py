@@ -101,6 +101,7 @@ class StreamDiffusion:
             self.vae = pipe.vae
             self.unet = pipe.unet
             self.text_encoder = pipe.text_encoder
+            self.image_proj = pipe.unet.encoder_hid_proj.to(self.device, dtype=self.dtype)
 
             # scheduler
             self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
@@ -109,8 +110,8 @@ class StreamDiffusion:
             # advanced prompt encoding
             self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
 
-            # ip adapter
-            self.ip_adapter_projector = IPAdapterProjection(pipe)
+            # # ip adapter
+            # self.ip_adapter_projector = IPAdapterProjection(pipe)
 
         # mark SDXL mode
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
@@ -299,7 +300,7 @@ class StreamDiffusion:
         print(f'{image_embeds=}')
 
         # projecting image embedding through ip adapter weights
-        projected_image_embeds = self.ip_adapter_projector(image_embeds)
+        projected_image_embeds = self.image_proj(image_embeds.to(self.device, dtype=self.dtype))
         print(f'{projected_image_embeds=}')
 
         # Store the image embeddings in the format expected by IP-Adapter

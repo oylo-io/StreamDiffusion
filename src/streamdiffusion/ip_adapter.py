@@ -48,6 +48,15 @@ class TensorIPAdapterAttnProcessor2_0(IPAdapterAttnProcessor2_0):
         # override scale
         self.scale = [ip_adapter_scale]
 
+        print(
+            f'Patched IPAdapterAttnProcessor2.0: '
+            f'hidden_states={hidden_states.shape, hidden_states.dtype}, '
+            f'encoder_hidden_states={encoder_hidden_states.shape, encoder_hidden_states.dtype}, '
+            # f'attention_mask={attention_mask.shape, attention_mask.dtype}, '
+            # f'temb={temb.shape, temb.dtype}, '
+            f'ip_adapter_scale={ip_adapter_scale.shape, ip_adapter_scale.dtype}, '
+        )
+
         # Call parent method
         return super().__call__(
             attn=attn,
@@ -141,6 +150,9 @@ def patch_unet_ip_adapter_projection(pipe):
             image_embeds = added_cond_kwargs["image_embeds"]
 
             # Return tuple format expected by attention processors
+            print(f'Patched Projection: '
+                  f'encoder_hidden_states={encoder_hidden_states.shape, encoder_hidden_states.dtype}'
+                  f'image_embeds={image_embeds.shape, image_embeds.dtype}')
             return encoder_hidden_states, image_embeds
         else:
 

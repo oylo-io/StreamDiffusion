@@ -8,6 +8,7 @@ from streamdiffusion.acceleration.tensorrt.optimizer import Optimizer
 def optimize_model(model_path, output_dir, do_fold_constants, do_infer_shapes):
 
     # load model
+    print(f'Loading from {model_path}')
     graph = onnx.load(model_path)
     opt = Optimizer(graph)
     opt.info("original")
@@ -54,8 +55,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Accelerate Pipeline with TRT")
     parser.add_argument('--model_path', type=Path, required=True)
     parser.add_argument('--output_dir', type=Path, required=True)
-    parser.add_argument('--do_fold_constants', default=True, action='store_true')
-    parser.add_argument('--do_infer_shapes', default=True, action='store_true')
+    parser.add_argument('--do_fold_constants', default=False, action='store_true')
+    parser.add_argument('--do_infer_shapes', default=False, action='store_true')
     args = parser.parse_args()
 
     # verify dir

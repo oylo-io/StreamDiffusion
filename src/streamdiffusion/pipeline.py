@@ -503,8 +503,8 @@ class StreamDiffusion:
         cross_attention_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
 
-        # Set the IP-Adapter scale directly on the pipe BEFORE inference
-        # This is the critical step that was missing
+        # Add IP-Adapter image-embeds and scale
+        print(f'{self.ip_adapter_scale=}, {self.ip_adapter_image_embeds=}')
         if self.ip_adapter_scale is not None and self.ip_adapter_image_embeds is not None:
             added_cond_kwargs["image_embeds"] = self.ip_adapter_image_embeds
             cross_attention_kwargs["ip_adapter_scale"] = self.ip_adapter_scale

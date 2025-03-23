@@ -40,8 +40,8 @@ class Optimizer:
             for i, name in enumerate(names):
                 self.graph.outputs[i].name = name
 
-    def fold_constants(self,):
-        onnx_graph = fold_constants(gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=True)
+    def fold_constants(self, **kwargs):
+        onnx_graph = fold_constants(gs.export_onnx(self.graph), **kwargs)
         self.graph = gs.import_onnx(onnx_graph)
 
     def infer_shapes(self, **kwrags):

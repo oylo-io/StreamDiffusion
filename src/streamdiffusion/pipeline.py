@@ -300,11 +300,7 @@ class StreamDiffusion:
         print(f'{image_embeds=}')
 
         # projecting image embedding through ip adapter weights
-        projected_image_embeds = self.image_proj(image_embeds.to(self.device, dtype=self.dtype))
-        print(f'{projected_image_embeds=}')
-
-        # Store the image embeddings in the format expected by IP-Adapter
-        self.ip_adapter_image_embeds = projected_image_embeds
+        self.ip_adapter_image_embeds = self.image_proj(image_embeds.to(self.device, dtype=self.dtype))[0]
         print(f'{self.ip_adapter_image_embeds=}')
 
     @torch.inference_mode()

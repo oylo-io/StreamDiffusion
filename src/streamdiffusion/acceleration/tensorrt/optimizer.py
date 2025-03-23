@@ -8,6 +8,9 @@ class Optimizer:
         self.graph = gs.import_onnx(onnx_graph)
         self.verbose = verbose
 
+    def export_onnx(self):
+        return gs.export_onnx(self.graph)
+
     def optimize(self):
         self.info("original")
         self.cleanup()
@@ -16,21 +19,20 @@ class Optimizer:
         self.info("fold constants")
         self.infer_shapes()
         self.info("shape inference")
-        onnx_opt_graph = self.cleanup(return_onnx=True)
+        self.cleanup()
         self.info("finished")
 
-        return onnx_opt_graph
-
     def info(self, prefix):
-        if self.verbose:
-            print(
-                f"{prefix} .. {len(self.graph.nodes)} nodes, {len(self.graph.tensors().keys())} tensors, {len(self.graph.inputs)} inputs, {len(self.graph.outputs)} outputs"
-            )
+        print(
+            f"{prefix}: "
+            f"{len(self.graph.nodes)} nodes, "
+            f"{len(self.graph.tensors().keys())} tensors,"
+            f" {len(self.graph.inputs)} inputs, "
+            f"{len(self.graph.outputs)} outputs"
+        )
 
-    def cleanup(self, return_onnx=False):
+    def cleanup(self):
         self.graph.cleanup().toposort()
-        if return_onnx:
-            return gs.export_onnx(self.graph)
 
     def select_outputs(self, keep, names=None):
         self.graph.outputs = [self.graph.outputs[o] for o in keep]
@@ -38,20 +40,16 @@ class Optimizer:
             for i, name in enumerate(names):
                 self.graph.outputs[i].name = name
 
-    def fold_constants(self, return_onnx=False):
+    def fold_constants(self,):
         onnx_graph = fold_constants(gs.export_onnx(self.graph), allow_onnxruntime_shape_inference=True)
         self.graph = gs.import_onnx(onnx_graph)
-        if return_onnx:
-            return onnx_graph
 
-    def infer_shapes(self, return_onnx=False):
+    def infer_shapes(self, **kwrags):
         onnx_graph = gs.export_onnx(self.graph)
         # if onnx_graph.ByteSize() > 2147483648:
         #     raise TypeError("ERROR: model size exceeds supported 2GB limit")
         # else:
         #     onnx_graph = shape_inference.infer_shapes(onnx_graph)
 
-        onnx_graph = shape_inference.infer_shapes(onnx_graph)
+        onnx_graph = shape_inference.infer_shapes(onnx_graph, **kwrags)
         self.graph = gs.import_onnx(onnx_graph)
-        if return_onnx:
-            return onnx_graph

@@ -48,7 +48,7 @@ def compile_vae_decoder(
     onnx_opt_path: str,
     engine_path: str,
     opt_batch_size: int = 1,
-        engine_build_options=None,
+    engine_build_options=None,
 ):
     if engine_build_options is None:
         engine_build_options = {}

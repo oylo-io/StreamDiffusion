@@ -302,8 +302,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         if not self.sdxl:
 
+            # unpack embeds
+            text_embeds = embeds[0]
+
             # repeat embeds for batch size and store
-            self.prompt_embeds = embeds.repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.repeat(self.batch_size, 1, 1)
 
         else:
 

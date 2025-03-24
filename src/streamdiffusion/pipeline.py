@@ -43,8 +43,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.height = height
         self.width = width
         self.vae_scale_factor = pipe.vae_scale_factor if pipe else vae_scale_factor
-        self.latent_height = int(height // pipe.vae_scale_factor)
-        self.latent_width = int(width // pipe.vae_scale_factor)
+        self.latent_height = int(height // self.vae_scale_factor )
+        self.latent_width = int(width // self.vae_scale_factor )
 
         # text Embeddings
         self.prompt_embeds = None

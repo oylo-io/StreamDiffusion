@@ -479,7 +479,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         prev_latent_batch = self.x_t_latent_buffer
 
         # Add IP-Adapter image-embeds and scale
-        print(f'{self.ip_strength=}, {self.ip_embeds=}')
         if self.ip_strength is not None and self.ip_embeds is not None:
             added_cond_kwargs["image_embeds"] = self.ip_embeds
             cross_attention_kwargs["ip_adapter_scale"] = self.ip_strength

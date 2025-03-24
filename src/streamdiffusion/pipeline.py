@@ -106,6 +106,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
         self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
 
+    @property
+    def ip_adapter_loaded(self):
+        return all((self.ip_encoder, self.ip_feature_extractor, self.ip_projection))
+
     def load_ip_adapter(
         self,
         repo_id: str = "h94/IP-Adapter",
@@ -175,7 +179,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.update_prompt('')
 
         # init empty image prompt
-        if self.ip_embeds is None:
+        if self.ip_embeds is None and self.ip_adapter_loaded:
             black_image = PIL.Image.new('RGB', (224, 224), color=0)
             self.generate_image_embedding(black_image)
             self.ip_strength = 0.0
@@ -257,7 +261,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @torch.inference_mode()
     def generate_image_embedding(self, image: PIL.Image.Image) -> None:
 
-        if self.ip_encoder is None or self.ip_feature_extractor is None or self.ip_projection is None:
+        if not self.ip_adapter_loaded:
             raise ValueError(
                 f"The pipeline doesn't have required image prompt components."
                 f"{self.ip_encoder=}, {self.ip_feature_extractor=}, {self.ip_projection=}"

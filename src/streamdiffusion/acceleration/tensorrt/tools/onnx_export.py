@@ -5,7 +5,7 @@ import torch
 from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from streamdiffusion.acceleration.tensorrt.models import UNetXLTurboIPAdapter
-from streamdiffusion.ip_adapter import prepare_unet_for_onnx_export, patch_unet_ip_adapter_projection
+from streamdiffusion.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
 
 
 class UNetXLWrapper(torch.nn.Module):
@@ -82,7 +82,7 @@ def export(is_sdxl, model_id, ip_adapter, height, width, num_timesteps, export_d
 
         # patch for onnx compatibility
         print('Patching IPAdapter')
-        prepare_unet_for_onnx_export(pipe)
+        patch_attention_processors(pipe)
         patch_unet_ip_adapter_projection(pipe)
 
     # Set batch sizes

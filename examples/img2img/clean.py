@@ -46,19 +46,19 @@ pipe = StableDiffusionXLPipeline.from_pretrained(
     variant='fp16'
 ).to(device)
 
-# Load and add IP-Adapter to the pipeline
-print('Loading IP Adapter')
-pipe.load_ip_adapter(
-    "h94/IP-Adapter",
-    subfolder="sdxl_models",
-    weight_name="ip-adapter_sdxl.safetensors",
-    torch_dtype=dtype
-)
-
-# replace attention processors
-print('Replacing attention processors')
-patch_attention_processors(pipe)
-patch_unet_ip_adapter_projection(pipe)
+# # Load and add IP-Adapter to the pipeline
+# print('Loading IP Adapter')
+# pipe.load_ip_adapter(
+#     "h94/IP-Adapter",
+#     subfolder="sdxl_models",
+#     weight_name="ip-adapter_sdxl.safetensors",
+#     torch_dtype=dtype
+# )
+#
+# # replace attention processors
+# print('Replacing attention processors')
+# patch_attention_processors(pipe)
+# patch_unet_ip_adapter_projection(pipe)
 
 # StreamDiffusion
 print('Loading StreamDiffusion')
@@ -78,9 +78,9 @@ print('Loading Images')
 input_image = load_image("/Users/himmelroman/Desktop/albert.png").resize((512, 512))
 reference_image = load_image("/Users/himmelroman/Desktop/Gur.jpg")
 
-# Generate image embeddings
-print('Generating IP Embeddings')
-stream.generate_image_embedding(reference_image)
+# # Generate image embeddings
+# print('Generating IP Embeddings')
+# stream.generate_image_embedding(reference_image)
 
 # Generate prompt embeddings
 print('Generating Prompt Embeddings')

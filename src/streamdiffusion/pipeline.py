@@ -4,7 +4,7 @@ import torch
 import PIL.Image
 import numpy as np
 
-from compel import Compel
+from compel import Compel, ReturnedEmbeddingsType
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -95,7 +95,13 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # text encoding
         self.text_encoder = pipe.text_encoder
-        self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
+        if self.sdxl:
+            self.compel = Compel(tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
+                            text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
+                            returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                            requires_pooled=[False, True])
+        else:
+            self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
 
         # image encoding
         self.ip_projection = None
@@ -296,7 +302,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def update_prompt(self, prompt: str) -> None:
 
         # get embeddings
-        # TODO: Fix Compel !!!
+
+        embeds_compel = self.compel(prompt)
+        # TODO: Make it work with the fast method         self.compel.build_weighted_embedding()
+
         embeds = self.pipe.encode_prompt(
             prompt=prompt,
             device=self.device,

@@ -1,21 +1,23 @@
-import time
-
-from typing import List, Optional, Union, Any, Dict, Tuple, Literal
+from typing import List, Optional, Union, Tuple, Literal
 
 import torch
 import PIL.Image
 import numpy as np
 
-from compel import Compel, ReturnedEmbeddingsType
+from compel import Compel
+
+from safetensors.torch import load_file
+from huggingface_hub import hf_hub_download
+
 from diffusers.image_processor import VaeImageProcessor
-from diffusers import LCMScheduler, StableDiffusionPipeline, StableDiffusionXLPipeline, DiffusionPipeline
+from diffusers.loaders import UNet2DConditionLoadersMixin
+from diffusers.models.embeddings import MultiIPAdapterImageProjection
+from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
-
-from streamdiffusion.image_filter import SimilarImageFilter
-from streamdiffusion.ip_adapter import IPAdapterProjection
+from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
 
-class StreamDiffusion:
+class StreamDiffusion(UNet2DConditionLoadersMixin):
     def __init__(
         self,
         pipe: Optional[DiffusionPipeline],
@@ -32,37 +34,40 @@ class StreamDiffusion:
         original_inference_steps: Optional[int] = 50
     ) -> None:
 
-        # optional arguments
+        # compute
         self.device = pipe.device if pipe else device
-        self.vae_scale_factor = pipe.vae_scale_factor if pipe else vae_scale_factor
-
         self.dtype = torch_dtype
         self.generator = None
 
-        self.timer_event = getattr(torch, str(self.device).split(':', 1)[0])
-
+        # image dimensions
         self.height = height
         self.width = width
-
+        self.vae_scale_factor = pipe.vae_scale_factor if pipe else vae_scale_factor
         self.latent_height = int(height // pipe.vae_scale_factor)
         self.latent_width = int(width // pipe.vae_scale_factor)
 
-        self.frame_bff_size = frame_buffer_size
-        self.denoising_steps_num = len(t_index_list)
-
-        # Text Embeddings
+        # text Embeddings
         self.prompt_embeds = None
         self.add_text_embeds = None
         self.add_time_ids = None
 
-        # Image Embeddings
-        self.ip_adapter_image_embeds = None
-        self.ip_adapter_scale = 0.0
+        # image Embeddings
+        self.ip_embeds = None
+        self.ip_strength = 0.0
 
+        # guidance
         self.cfg_type = cfg_type
         self.alpha_prod_t_sqrt = None
         self.beta_prod_t_sqrt = None
 
+        # inference steps
+        self.t_list = t_index_list
+        self.do_add_noise = do_add_noise
+
+        # batching
+        self.frame_bff_size = frame_buffer_size
+        self.use_denoising_batch = use_denoising_batch
+        self.denoising_steps_num = len(t_index_list)
         if use_denoising_batch:
             self.batch_size = self.denoising_steps_num * frame_buffer_size
             if self.cfg_type == "initialize":
@@ -79,82 +84,58 @@ class StreamDiffusion:
             self.trt_unet_batch_size = self.frame_bff_size
             self.batch_size = frame_buffer_size
 
-        self.t_list = t_index_list
-
-        self.do_add_noise = do_add_noise
-        self.use_denoising_batch = use_denoising_batch
-
-        self.similar_image_filter = False
-        self.similar_filter = SimilarImageFilter()
-        self.prev_image_result = None
-
-        self.image_processor = VaeImageProcessor(self.vae_scale_factor)
-        self.inference_time_ema = 0
-
-        # check if sd pipeline instance provided
-        if pipe:
-
-            # save pipe
-            self.pipe = pipe
-
-            # save pipeline components
-            self.vae = pipe.vae
-            self.unet = pipe.unet
-            self.text_encoder = pipe.text_encoder
-            self.image_proj = pipe.unet.encoder_hid_proj.to(self.device, dtype=self.dtype)
-
-            # scheduler
-            self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
-            self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
-
-            # advanced prompt encoding
-            self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
-
-            # # ip adapter
-            # self.ip_adapter_projector = IPAdapterProjection(pipe)
-
-        # mark SDXL mode
+        # pipe
+        self.pipe = pipe
+        self.unet = pipe.unet
         self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
 
-    def load_lora(
+        # vae
+        self.vae = pipe.vae
+        self.image_processor = VaeImageProcessor(self.vae_scale_factor)
+
+        # text encoding
+        self.text_encoder = pipe.text_encoder
+        self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
+
+        # image encoding
+        self.ip_projection = None
+        self.ip_encoder = None
+        self.ip_feature_extractor = None
+
+        # scheduler
+        self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
+        self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
+
+    def load_ip_adapter(
         self,
-        pretrained_lora_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
-        adapter_name: Optional[Any] = None,
-        **kwargs,
-    ) -> None:
+        repo_id: str = "h94/IP-Adapter",
+        encoder_folder: str = "sdxl_models/image_encoder",
+        projection_weights_filename: str = "sdxl_models/ip-adapter_sdxl.safetensors",
+        low_cpu_mem_usage: bool = True,
+        local_files_only: bool = True
+    ):
+        # load image encoder
+        self.ip_encoder = CLIPVisionModelWithProjection.from_pretrained(
+            repo_id,
+            subfolder=encoder_folder,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            local_files_only=local_files_only
+        ).to(self.device, dtype=self.dtype)
 
-        if not self.pipe:
-            raise Exception("No pipeline")
+        # load image processor (feature extractor)
+        clip_size = self.ip_encoder.config.image_size if self.ip_encoder else 224
+        self.ip_feature_extractor = CLIPImageProcessor(size=clip_size, crop_size=clip_size)
 
-        self.pipe.load_lora_weights(
-            pretrained_lora_model_name_or_path_or_dict, adapter_name, **kwargs
+        # load projection layer
+        model_file = hf_hub_download(
+            repo_id=repo_id,
+            filename=projection_weights_filename,
+            local_files_only=local_files_only
         )
-
-    def fuse_lora(
-        self,
-        fuse_unet: bool = True,
-        fuse_text_encoder: bool = True,
-        lora_scale: float = 1.0,
-        safe_fusing: bool = False,
-    ) -> None:
-
-        if not self.pipe:
-            raise Exception("No pipeline")
-
-        self.pipe.fuse_lora(
-            fuse_unet=fuse_unet,
-            fuse_text_encoder=fuse_text_encoder,
-            lora_scale=lora_scale,
-            safe_fusing=safe_fusing,
-        )
-
-    def enable_similar_image_filter(self, threshold: float = 0.98, max_skip_frame: float = 10) -> None:
-        self.similar_image_filter = True
-        self.similar_filter.set_threshold(threshold)
-        self.similar_filter.set_max_skip_frame(max_skip_frame)
-
-    def disable_similar_image_filter(self) -> None:
-        self.similar_image_filter = False
+        state_dict = load_file(model_file, device='cpu')
+        state_dict = {k.replace("image_proj.", ""): v for k, v in state_dict.items() if k.startswith("image_proj.")}
+        image_projection_layer = self._convert_ip_adapter_image_proj_to_diffusers(state_dict, low_cpu_mem_usage=low_cpu_mem_usage)
+        self.ip_projection = MultiIPAdapterImageProjection([image_projection_layer]).to(self.device, dtype=self.dtype)
 
     @torch.inference_mode()
     def prepare(
@@ -194,10 +175,10 @@ class StreamDiffusion:
             self.update_prompt('')
 
         # init empty image prompt
-        if self.ip_adapter_image_embeds is None:
+        if self.ip_embeds is None:
             black_image = PIL.Image.new('RGB', (224, 224), color=0)
             self.generate_image_embedding(black_image)
-            self.ip_adapter_scale = 0.0
+            self.ip_strength = 0.0
 
         # init timesteps
         self.scheduler.set_timesteps(num_inference_steps, self.device)
@@ -274,38 +255,29 @@ class StreamDiffusion:
         )
 
     @torch.inference_mode()
-    def generate_image_embedding(self, image: Union[torch.Tensor, PIL.Image.Image, np.ndarray]) -> None:
+    def generate_image_embedding(self, image: PIL.Image.Image) -> None:
 
-        if not hasattr(self.pipe, "image_encoder") or self.pipe.image_encoder is None:
+        if self.ip_encoder is None or self.ip_feature_extractor is None or self.ip_projection is None:
             raise ValueError(
-                "The pipeline doesn't have an image_encoder. Make sure IP-Adapter is properly loaded.")
-
-        if not hasattr(self.pipe, "feature_extractor") or self.pipe.feature_extractor is None:
-            raise ValueError(
-                "The pipeline doesn't have an feature_extractor. Make sure IP-Adapter is properly loaded.")
-
-        # Process the image using the pipeline's feature extractor
-        if not isinstance(image, list):
-            image = [image]
+                f"The pipeline doesn't have required image prompt components."
+                f"{self.ip_encoder=}, {self.ip_feature_extractor=}, {self.ip_projection=}"
+            )
 
         # Process the image
-        image = self.pipe.feature_extractor(
+        image_features = self.ip_feature_extractor(
             images=image,
             return_tensors="pt",
         ).pixel_values.to(device=self.device, dtype=self.dtype)
-        print(f'{image=}')
 
-        # Generate image embeddings using the pipeline's image encoder
-        image_embeds = self.pipe.image_encoder(image).image_embeds
-        print(f'{image_embeds=}')
+        # Generate image embeddings with image encoder
+        image_embeds = self.ip_encoder(image_features).image_embeds
 
         # projecting image embedding through ip adapter weights
-        self.ip_adapter_image_embeds = self.image_proj(image_embeds.to(self.device, dtype=self.dtype))[0]
-        print(f'{self.ip_adapter_image_embeds=}')
+        self.ip_embeds = self.ip_projection(image_embeds)[0]
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
-        self.ip_adapter_scale = torch.tensor([scale], device=self.device, dtype=self.dtype)
+        self.ip_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
 
     @torch.inference_mode()
     def generate_prompt_embeddings(self, prompt: str):
@@ -320,12 +292,18 @@ class StreamDiffusion:
     def update_prompt(self, prompt: str) -> None:
 
         # get embeddings
-        embeds = self.generate_prompt_embeddings(prompt) # self.compel(prompt)
+        # TODO: Fix Compel !!!
+        embeds = self.pipe.encode_prompt(
+            prompt=prompt,
+            device=self.device,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=False,
+        )
 
         if not self.sdxl:
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = embeds.to(device=self.device, dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = embeds.repeat(self.batch_size, 1, 1)
 
         else:
 
@@ -333,18 +311,16 @@ class StreamDiffusion:
             text_embeds, pooled_embeds = embeds[0], embeds[2]
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = text_embeds.to(device=self.device, dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.repeat(self.batch_size, 1, 1)
 
             # Process additional text embeddings needed for SDXL
-            self.add_text_embeds = pooled_embeds.to(device=self.device, dtype=self.dtype)
+            self.add_text_embeds = pooled_embeds
 
             # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(
                 (self.height, self.width),
                 (0, 0),
-                (self.height, self.width),
-                dtype=self.prompt_embeds.dtype,
-                text_encoder_projection_dim=int(self.add_text_embeds.shape[-1]),
+                (self.height, self.width)
             ).to(self.device)
 
     def add_noise(
@@ -461,11 +437,7 @@ class StreamDiffusion:
 
         return denoised_batch, model_pred
 
-    def _get_add_time_ids(
-        self, original_size, crops_coords_top_left, target_size, dtype, text_encoder_projection_dim=None
-    ):
-        add_time_ids = list(original_size + crops_coords_top_left + target_size)
-
+    def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size):
         # passed_add_embed_dim = (
         #     self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
         # )
@@ -476,7 +448,8 @@ class StreamDiffusion:
         #         f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
         #     )
 
-        add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
+        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        add_time_ids = torch.tensor([add_time_ids], device=self.device, dtype=self.dtype)
         return add_time_ids
 
     @torch.inference_mode()
@@ -506,10 +479,10 @@ class StreamDiffusion:
         prev_latent_batch = self.x_t_latent_buffer
 
         # Add IP-Adapter image-embeds and scale
-        print(f'{self.ip_adapter_scale=}, {self.ip_adapter_image_embeds=}')
-        if self.ip_adapter_scale is not None and self.ip_adapter_image_embeds is not None:
-            added_cond_kwargs["image_embeds"] = self.ip_adapter_image_embeds
-            cross_attention_kwargs["ip_adapter_scale"] = self.ip_adapter_scale
+        print(f'{self.ip_strength=}, {self.ip_embeds=}')
+        if self.ip_strength is not None and self.ip_embeds is not None:
+            added_cond_kwargs["image_embeds"] = self.ip_embeds
+            cross_attention_kwargs["ip_adapter_scale"] = self.ip_strength
 
         # Handle SDXL specific added conditions
         if self.sdxl:
@@ -582,21 +555,10 @@ class StreamDiffusion:
         decode_output: bool = True
     ) -> torch.Tensor:
 
-        start = self.timer_event.Event(enable_timing=True)
-        end = self.timer_event.Event(enable_timing=True)
-        start.record()
-
         # pre process
         x = self.image_processor.preprocess(x, self.height, self.width).to(
             device=self.device, dtype=self.dtype
         )
-
-        # similarity filter
-        if self.similar_image_filter:
-            x = self.similar_filter(x)
-            if x is None:
-                time.sleep(self.inference_time_ema)
-                return self.prev_image_result
 
         # check if input should be encoded
         if encode_input:
@@ -616,12 +578,6 @@ class StreamDiffusion:
             x_output = self.decode_image(x_0_pred_out).detach().clone()
         else:
             x_output = x_0_pred_out
-
-        self.prev_image_result = x_output
-        end.record()
-        self.timer_event.synchronize()
-        inference_time = start.elapsed_time(end) / 1000
-        self.inference_time_ema = 0.9 * self.inference_time_ema + 0.1 * inference_time
 
         return x_output
 

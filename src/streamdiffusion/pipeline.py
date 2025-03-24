@@ -96,12 +96,17 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # text encoding
         self.text_encoder = pipe.text_encoder
         if self.sdxl:
-            self.compel = Compel(tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
-                            text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
-                            returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                            requires_pooled=[False, True])
+            self.compel = Compel(
+                tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
+                text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                requires_pooled=[False, True]
+            )
         else:
-            self.compel = Compel(tokenizer=self.pipe.tokenizer, text_encoder=self.pipe.text_encoder)
+            self.compel = Compel(
+                tokenizer=self.pipe.tokenizer,
+                text_encoder=self.pipe.text_encoder
+            )
 
         # image encoding
         self.ip_projection = None
@@ -302,35 +307,30 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def update_prompt(self, prompt: str) -> None:
 
         # get embeddings
-
-        embeds_compel = self.compel(prompt)
-        # TODO: Make it work with the fast method         self.compel.build_weighted_embedding()
-
-        embeds = self.pipe.encode_prompt(
+        embeds = self.compel.build_weighted_embedding(
             prompt=prompt,
-            device=self.device,
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=False,
+            requires_pooled=self.sdxl
         )
 
+        # check for sdxl mode
         if not self.sdxl:
 
             # unpack embeds
             text_embeds = embeds[0]
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = text_embeds.repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
         else:
 
             # unpack embeds
-            text_embeds, pooled_embeds = embeds[0], embeds[2]
+            text_embeds, pooled_embeds = embeds
 
             # repeat embeds for batch size and store
-            self.prompt_embeds = text_embeds.repeat(self.batch_size, 1, 1)
+            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
             # Process additional text embeddings needed for SDXL
-            self.add_text_embeds = pooled_embeds
+            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype)
 
             # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(

@@ -318,7 +318,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # unpack embeds
             text_embeds = embeds[0]
 
-            # repeat embeds for batch size and store
+            # repeat embeds for batch size
             self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
         else:
@@ -326,11 +326,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # unpack embeds
             text_embeds, pooled_embeds = embeds
 
-            # repeat embeds for batch size and store
+            # repeat embeds for batch size
             self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
 
-            # Process additional text embeddings needed for SDXL
-            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype)
+            # repeat embeds for batch size
+            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1)
 
             # Set up the additional time embeddings needed for SDXL
             self.add_time_ids = self._get_add_time_ids(
@@ -338,6 +338,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 (0, 0),
                 (self.height, self.width)
             ).to(self.device)
+
+            # repeat embeds for batch size
+            self.add_time_ids = self.add_time_ids.repeat(self.batch_size, 1)
 
     def add_noise(
         self,

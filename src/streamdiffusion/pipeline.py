@@ -53,7 +53,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # image Embeddings
         self.ip_embeds = None
-        self.ip_strength = 0.0
+        self.ip_strength = None
 
         # guidance
         self.cfg_type = cfg_type
@@ -193,7 +193,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         if self.ip_embeds is None and self.ip_adapter_loaded:
             black_image = PIL.Image.new('RGB', (224, 224), color=0)
             self.generate_image_embedding(black_image)
-            self.ip_strength = 0.0
+            self.set_image_prompt_scale(0.0)
 
         # init timesteps
         self.scheduler.set_timesteps(num_inference_steps, self.device)
@@ -288,7 +288,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_embeds = self.ip_encoder(image_features).image_embeds
 
         # projecting image embedding through ip adapter weights
-        self.ip_embeds = self.ip_projection(image_embeds)[0]
+        image_embeds_projected = self.ip_projection(image_embeds)[0]
+
+        # repeat for batching
+        self.ip_embeds = image_embeds_projected.repeat(self.batch_size, 1, 1, 1)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):

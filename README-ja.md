@@ -221,7 +221,7 @@ pipe.enable_xformers_memory_efficient_attention()
 
 prompt = "1girl with dog hair, thick frame glasses"
 # streamを準備する
-stream.prepare(prompt)
+stream.set_noise(prompt)
 
 # 画像を読み込む
 init_image = load_image("assets/img2img_example.png").resize((512, 512))
@@ -274,7 +274,7 @@ pipe.enable_xformers_memory_efficient_attention()
 
 prompt = "1girl with dog hair, thick frame glasses"
 # streamを準備する
-stream.prepare(prompt)
+stream.set_noise(prompt)
 
 # Warmup >= len(t_index_list) x frame_buffer_size
 for _ in range(4):
@@ -365,16 +365,16 @@ cfg_type = "self"
 cfg_type = "initialize"
 
 stream = StreamDiffusion(
-    pipe,
-    [32, 45],
-    torch_dtype=torch.float16,
-    cfg_type=cfg_type,
+   pipe,
+   [32, 45],
+   torch_dtype=torch.float16,
+   cfg_type=cfg_type,
 )
 
-stream.prepare(
-    prompt="1girl, purple hair",
-    guidance_scale=guidance_scale,
-    delta=delta,
+stream.set_noise(
+   prompt="1girl, purple hair",
+   guidance_scale=guidance_scale,
+   delta=delta,
 )
 ```
 

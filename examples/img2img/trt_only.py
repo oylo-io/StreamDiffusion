@@ -182,7 +182,7 @@ def run(
     )
 
     # prepare
-    stream.prepare(
+    stream.set_noise(
         prompt='beautiful female dog'
     )
 

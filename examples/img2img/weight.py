@@ -77,7 +77,7 @@ for w in range(10):
     # prepare
     stream.t_list = [20]
     stream._denoising_steps_num = len(stream.t_list)
-    stream.prepare(
+    stream.set_noise(
         num_inference_steps=100,
         seed=123
     )

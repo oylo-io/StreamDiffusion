@@ -87,11 +87,11 @@ for ip in ip_scales:
         )
         stream.load_ip_adapter()
         stream.set_image_prompt_scale(ip)
-        stream.generate_image_embedding(reference_image)
+        stream.update_image_prompt(reference_image)
 
         print(f'Preparing for {ip=}, {s=}')
         stream._denoising_steps_num = len(stream.t_list)
-        stream.prepare(
+        stream.set_noise(
             num_inference_steps=100,
             seed=123
         )

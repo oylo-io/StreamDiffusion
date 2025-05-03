@@ -213,10 +213,9 @@ stream.vae = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(device=pipe
 # 가속화 활성화
 pipe.enable_xformers_memory_efficient_attention()
 
-
 prompt = "1girl with dog hair, thick frame glasses"
 # 스트림을 준비합니다
-stream.prepare(prompt)
+stream.set_noise(prompt)
 
 # 이미지를 준비합니다
 init_image = load_image("assets/img2img_example.png").resize((512, 512))
@@ -267,10 +266,9 @@ stream.vae = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(device=pipe
 # 가속화 활성화
 pipe.enable_xformers_memory_efficient_attention()
 
-
 prompt = "1girl with dog hair, thick frame glasses"
 # 스트림을 준비합니다
-stream.prepare(prompt)
+stream.set_noise(prompt)
 
 # 웜업 >= len(t_index_list) x frame_buffer_size
 for _ in range(4):
@@ -360,7 +358,7 @@ stream = StreamDiffusion(
     torch_dtype=torch.float16,
     cfg_type=cfg_type,
 )
-stream.prepare(
+stream.set_noise(
     prompt="1girl, purple hair",
     guidance_scale=guidance_scale,
     delta=delta,

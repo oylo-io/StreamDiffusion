@@ -88,14 +88,14 @@ for b in batch_sizes:
     stream.t_list = timesteps[:b]
     stream._denoising_steps_num = len(stream.t_list)
     stream.batch_size = stream._denoising_steps_num
-    stream.prepare(
+    stream.set_noise(
         num_inference_steps=100,
         seed=123
     )
 
     # regenerate embeddings - they need to be repeated for batch size
     stream.update_prompt("ibex, high quality, best quality")
-    stream.generate_image_embedding(reference_image)
+    stream.update_image_prompt(reference_image)
     stream.set_image_prompt_scale(0.9)
 
     print(f'Generating for {b=}, {stream.t_list=}')

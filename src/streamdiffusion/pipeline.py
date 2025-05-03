@@ -26,7 +26,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         width: int = 512,
         height: int = 512,
         do_add_noise: bool = True,
-        use_denoising_batch: bool = True,
         frame_buffer_size: int = 1,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         device: Optional[str] = None,
@@ -66,22 +65,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # batching
         self.frame_bff_size = frame_buffer_size
-        self.use_denoising_batch = use_denoising_batch
-        self.denoising_steps_num = len(t_index_list)
+        self._denoising_steps_num = len(t_index_list)
         if use_denoising_batch:
-            self.batch_size = self.denoising_steps_num * frame_buffer_size
-            if self.cfg_type == "initialize":
-                self.trt_unet_batch_size = (
-                    self.denoising_steps_num + 1
-                ) * self.frame_bff_size
-            elif self.cfg_type == "full":
-                self.trt_unet_batch_size = (
-                    2 * self.denoising_steps_num * self.frame_bff_size
-                )
-            else:
-                self.trt_unet_batch_size = self.denoising_steps_num * frame_buffer_size
+            self.batch_size = self._denoising_steps_num * frame_buffer_size
         else:
-            self.trt_unet_batch_size = self.frame_bff_size
             self.batch_size = frame_buffer_size
 
         # pipe
@@ -116,6 +103,18 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # scheduler
         self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
         self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
+
+    @property
+    def use_denoising_batch(self):
+        return self._denoising_steps_num > 1
+
+    @property
+    def denoising_steps_num(self):
+        return self._denoising_steps_num
+
+    @denoising_steps_num.setter
+    def denoising_steps_num(self, value):
+        self._denoising_steps_num = value
 
     @property
     def ip_adapter_loaded(self):
@@ -164,11 +163,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.generator = generator
         self.generator.manual_seed(seed)
 
-        # initialize x_t_latent (it can be any random tensor)
-        if self.denoising_steps_num > 1:
+        # initialize buffer for batch denoising
+        if self._denoising_steps_num > 1:
             self.x_t_latent_buffer = torch.zeros(
                 (
-                    (self.denoising_steps_num - 1) * self.frame_bff_size,
+                    (self._denoising_steps_num - 1) * self.frame_bff_size,
                     4,
                     self.latent_height,
                     self.latent_width,
@@ -515,7 +514,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         if self.use_denoising_batch:
             t_list = self.sub_timesteps_tensor
-            if self.denoising_steps_num > 1:
+            if self._denoising_steps_num > 1:
                 x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
                 self.stock_noise = torch.cat(
                     (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
@@ -530,7 +529,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 cross_attention_kwargs=cross_attention_kwargs
             )
 
-            if self.denoising_steps_num > 1:
+            if self._denoising_steps_num > 1:
                 x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
                 if self.do_add_noise:
                     self.x_t_latent_buffer = (

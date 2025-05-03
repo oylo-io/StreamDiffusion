@@ -76,7 +76,7 @@ for w in range(10):
 
     # prepare
     stream.t_list = [20]
-    stream.denoising_steps_num = len(stream.t_list)
+    stream._denoising_steps_num = len(stream.t_list)
     stream.prepare(
         num_inference_steps=100,
         seed=123
@@ -86,7 +86,7 @@ for w in range(10):
     prompt = f"medieval hilltop town (snow){0.0 + w * 2}"
     stream.update_prompt(prompt)
 
-    for _ in range(stream.denoising_steps_num - 1):
+    for _ in range(stream._denoising_steps_num - 1):
         stream(input_image, encode_input=True, decode_output=True)
 
     img_pt = stream(input_image, encode_input=True, decode_output=True)

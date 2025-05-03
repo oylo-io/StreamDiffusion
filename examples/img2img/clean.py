@@ -90,14 +90,14 @@ for ip in ip_scales:
         stream.generate_image_embedding(reference_image)
 
         print(f'Preparing for {ip=}, {s=}')
-        stream.denoising_steps_num = len(stream.t_list)
+        stream._denoising_steps_num = len(stream.t_list)
         stream.prepare(
             num_inference_steps=100,
             seed=123
         )
 
         print(f'Generating for {ip=}, {s=}')
-        for step in range(stream.denoising_steps_num - 1):
+        for step in range(stream._denoising_steps_num - 1):
             stream(input_image, encode_input=True, decode_output=True)
         img_pt = stream(input_image, encode_input=True, decode_output=True)
         img_pil = postprocess_image(img_pt)[0]

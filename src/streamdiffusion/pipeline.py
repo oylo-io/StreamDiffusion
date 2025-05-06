@@ -9,7 +9,6 @@ from compel import Compel, ReturnedEmbeddingsType
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
-from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
@@ -189,7 +188,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.x_t_latent_buffer = None
 
         # update sub timesteps
-        self.sub_timesteps = [self.timesteps[t].item() for t in t_list]
+        self.sub_timesteps = [self.timesteps[t] for t in t_list]
         sub_timesteps_tensor = torch.tensor(
             self.sub_timesteps, dtype=torch.long, device=self.device
         )

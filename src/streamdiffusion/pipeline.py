@@ -100,18 +100,19 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.x_t_latent_buffer = None
         self.frame_bff_size = frame_buffer_size
         self._denoising_steps_num = len(t_index_list)
-        if self.use_denoising_batch:
-            self.batch_size = self._denoising_steps_num * frame_buffer_size
-        else:
-            self.batch_size = frame_buffer_size
+        self.batch_size = self._denoising_steps_num * frame_buffer_size
+        # if self.use_denoising_batch:
+        #     self.batch_size = self._denoising_steps_num * frame_buffer_size
+        # else:
+        #     self.batch_size = frame_buffer_size
 
     @property
     def is_sdxl(self):
         return type(self.pipe) is StableDiffusionXLPipeline
 
-    @property
-    def use_denoising_batch(self):
-        return self._denoising_steps_num > 1
+    # @property
+    # def use_denoising_batch(self):
+    #     return self._denoising_steps_num > 1
 
     @property
     def denoising_steps_num(self):
@@ -164,28 +165,39 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.denoising_steps_num = len(t_list)
 
         # update batch size
-        if not self.use_denoising_batch:
-            self.x_t_latent_buffer = None
-            self.batch_size = self.frame_bff_size
-        else:
-            self.batch_size = self._denoising_steps_num * self.frame_bff_size
+        self.batch_size = self._denoising_steps_num * self.frame_bff_size
+        # if not self.use_denoising_batch:
+        #     self.x_t_latent_buffer = None
+        #     self.batch_size = self.frame_bff_size
+        # else:
+        #     self.batch_size = self._denoising_steps_num * self.frame_bff_size
 
         # initialize buffer for batch denoising
-        if self.use_denoising_batch:
-            # FIXME: What if processing is in progress?
-            #  We kill the buffer and all partially denoised latents are discarded.
-            self.x_t_latent_buffer = torch.zeros(
-                (
-                    (self._denoising_steps_num - 1) * self.frame_bff_size,
-                    4,
-                    self.latent_height,
-                    self.latent_width,
-                ),
-                dtype=self.dtype,
-                device=self.device,
-            )
-        else:
-            self.x_t_latent_buffer = None
+        self.x_t_latent_buffer = torch.zeros(
+            (
+                (self._denoising_steps_num - 1) * self.frame_bff_size,
+                4,
+                self.latent_height,
+                self.latent_width,
+            ),
+            dtype=self.dtype,
+            device=self.device
+        )
+        # if self.use_denoising_batch:
+        #     # FIXME: What if processing is in progress?
+        #     #  We kill the buffer and all partially denoised latents are discarded.
+        #     self.x_t_latent_buffer = torch.zeros(
+        #         (
+        #             (self._denoising_steps_num - 1) * self.frame_bff_size,
+        #             4,
+        #             self.latent_height,
+        #             self.latent_width,
+        #         ),
+        #         dtype=self.dtype,
+        #         device=self.device,
+        #     )
+        # else:
+        #     self.x_t_latent_buffer = None
 
         # update sub timesteps
         self.sub_timesteps = [self.timesteps[t] for t in t_list]
@@ -194,7 +206,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         )
         self.sub_timesteps_pt = torch.repeat_interleave(
             sub_timesteps_tensor,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
+            repeats=self.frame_bff_size,
             dim=0,
         )
 
@@ -377,12 +389,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         )
         self.alpha_prod_t_sqrt = torch.repeat_interleave(
             alpha_prod_t_sqrt,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
+            repeats=self.frame_bff_size,
             dim=0,
         )
         self.beta_prod_t_sqrt = torch.repeat_interleave(
             beta_prod_t_sqrt,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
+            repeats=self.frame_bff_size,
             dim=0,
         )
 
@@ -434,35 +446,35 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         model_pred = noise_pred_text
 
         # compute the previous noisy sample x_t -> x_t-1
-        if self.use_denoising_batch:
-            denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
-            if self.cfg_type == "self" or self.cfg_type == "initialize":
-                scaled_noise = self.beta_prod_t_sqrt * self.stock_noise
-                delta_x = self.scheduler_step_batch(model_pred, scaled_noise, idx)
-                alpha_next = torch.concat(
-                    [
-                        self.alpha_prod_t_sqrt[1:],
-                        torch.ones_like(self.alpha_prod_t_sqrt[0:1]),
-                    ],
-                    dim=0,
-                )
-                delta_x = alpha_next * delta_x
-                beta_next = torch.concat(
-                    [
-                        self.beta_prod_t_sqrt[1:],
-                        torch.ones_like(self.beta_prod_t_sqrt[0:1]),
-                    ],
-                    dim=0,
-                )
-                delta_x = delta_x / beta_next
-                init_noise = torch.concat(
-                    [self.init_noise[1:], self.init_noise[0:1]], dim=0
-                )
-                self.stock_noise = init_noise + delta_x
+        # if self.use_denoising_batch:
+        denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
+        if self.cfg_type == "self" or self.cfg_type == "initialize":
+            scaled_noise = self.beta_prod_t_sqrt * self.stock_noise
+            delta_x = self.scheduler_step_batch(model_pred, scaled_noise, idx)
+            alpha_next = torch.concat(
+                [
+                    self.alpha_prod_t_sqrt[1:],
+                    torch.ones_like(self.alpha_prod_t_sqrt[0:1]),
+                ],
+                dim=0,
+            )
+            delta_x = alpha_next * delta_x
+            beta_next = torch.concat(
+                [
+                    self.beta_prod_t_sqrt[1:],
+                    torch.ones_like(self.beta_prod_t_sqrt[0:1]),
+                ],
+                dim=0,
+            )
+            delta_x = delta_x / beta_next
+            init_noise = torch.concat(
+                [self.init_noise[1:], self.init_noise[0:1]], dim=0
+            )
+            self.stock_noise = init_noise + delta_x
 
-        else:
-            # denoised_batch = self.scheduler.step(model_pred, t_list[0], x_t_latent).denoised
-            denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
+        # else:
+        #     # denoised_batch = self.scheduler.step(model_pred, t_list[0], x_t_latent).denoised
+        #     denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
 
         return denoised_batch, model_pred
 
@@ -508,37 +520,37 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             }
             added_cond_kwargs.update(base_added_cond_kwargs)
 
-        if self.use_denoising_batch:
-            t_list = self.sub_timesteps_pt
-            if self._denoising_steps_num > 1:
-                x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
-                self.stock_noise = torch.cat(
-                    (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
-                )
-
-            x_t_latent = x_t_latent.to(self.device)
-            t_list = t_list.to(self.device)
-            x_0_pred_batch, model_pred = self.unet_step(
-                x_t_latent,
-                t_list,
-                added_cond_kwargs=added_cond_kwargs,
-                cross_attention_kwargs=cross_attention_kwargs
+        # if self.use_denoising_batch:
+        t_list = self.sub_timesteps_pt
+        if self._denoising_steps_num > 1:
+            x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
+            self.stock_noise = torch.cat(
+                (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
             )
 
-            if self._denoising_steps_num > 1:
-                x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
-                if self.do_add_noise:
-                    self.x_t_latent_buffer = (
-                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
-                        + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
-                    )
-                else:
-                    self.x_t_latent_buffer = (
-                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
-                    )
+        x_t_latent = x_t_latent.to(self.device)
+        t_list = t_list.to(self.device)
+        x_0_pred_batch, model_pred = self.unet_step(
+            x_t_latent,
+            t_list,
+            added_cond_kwargs=added_cond_kwargs,
+            cross_attention_kwargs=cross_attention_kwargs
+        )
+
+        if self._denoising_steps_num > 1:
+            x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
+            if self.do_add_noise:
+                self.x_t_latent_buffer = (
+                    self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
+                    + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
+                )
             else:
-                x_0_pred_out = x_0_pred_batch
-                self.x_t_latent_buffer = None
+                self.x_t_latent_buffer = (
+                    self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
+                )
+        else:
+            x_0_pred_out = x_0_pred_batch
+            self.x_t_latent_buffer = None
         # else:
         #     self.init_noise = x_t_latent
         #     for idx, t in enumerate(self.sub_timesteps_pt):

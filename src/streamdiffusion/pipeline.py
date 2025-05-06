@@ -173,31 +173,21 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     self.batch_size = self._denoising_steps_num * self.frame_bff_size
 
         # initialize buffer for batch denoising
-        self.x_t_latent_buffer = torch.zeros(
-            (
-                (self._denoising_steps_num - 1) * self.frame_bff_size,
-                4,
-                self.latent_height,
-                self.latent_width,
-            ),
-            dtype=self.dtype,
-            device=self.device
-        )
-        # if self.use_denoising_batch:
-        #     # FIXME: What if processing is in progress?
-        #     #  We kill the buffer and all partially denoised latents are discarded.
-        #     self.x_t_latent_buffer = torch.zeros(
-        #         (
-        #             (self._denoising_steps_num - 1) * self.frame_bff_size,
-        #             4,
-        #             self.latent_height,
-        #             self.latent_width,
-        #         ),
-        #         dtype=self.dtype,
-        #         device=self.device,
-        #     )
-        # else:
-        #     self.x_t_latent_buffer = None
+        if self.denoising_steps_num > 1:
+            # FIXME: What if processing is in progress?
+            #  We kill the buffer and all partially denoised latents are discarded.
+            self.x_t_latent_buffer = torch.zeros(
+                (
+                    (self._denoising_steps_num - 1) * self.frame_bff_size,
+                    4,
+                    self.latent_height,
+                    self.latent_width,
+                ),
+                dtype=self.dtype,
+                device=self.device,
+            )
+        else:
+            self.x_t_latent_buffer = None
 
         # update sub timesteps
         self.sub_timesteps = [self.timesteps[t] for t in t_list]

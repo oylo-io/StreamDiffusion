@@ -624,8 +624,23 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @classmethod
     def fit_to_dimension(cls, tensor, dimension):
 
-        if tensor.shape[0] > 1:
-            tensor = tensor[0].unsqueeze(0)
-        tensor = tensor.repeat(dimension, 1, 1, 1)
+        if tensor is None:
+            return None
 
-        return tensor
+        # Get the original batch size
+        original_batch_size = tensor.shape[0]
+
+        # If the original batch size is already equal to the desired dimension, return as is
+        if original_batch_size == dimension:
+            return tensor
+
+        # Take the first element if there are multiple elements in the batch
+        if original_batch_size > 1:
+            tensor = tensor[0].unsqueeze(0)
+
+        # Create a repeat tuple with ones for all dimensions except the first
+        # For a tensor with ndim=3, this creates (dimension, 1, 1)
+        # For a tensor with ndim=4, this creates (dimension, 1, 1, 1)
+        repeat_dims = (dimension,) + (1,) * (tensor.ndim - 1)
+
+        return tensor.repeat(*repeat_dims)

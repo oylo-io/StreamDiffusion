@@ -253,7 +253,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def repeat_image_prompt(self):
 
         # repeat for batching
-        self.cached_ip_embeds = self.cached_ip_embeds.repeat(self.batch_size, 1, 1, 1)
+        if self.cached_ip_embeds:
+            self.cached_ip_embeds = self.cached_ip_embeds.repeat(self.batch_size, 1, 1, 1)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):

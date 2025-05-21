@@ -246,6 +246,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # projecting image embedding through ip adapter weights
         self.cached_ip_embeds = self.ip_projection(image_embeds)[0]
+        self.cached_ip_embeds = self.cached_ip_embeds.unsqueeze(0) # add batch dimension
 
         # repeat to fit batch size
         self.repeat_image_prompt()
@@ -285,7 +286,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             text_embeds = embeds[0]
 
             # repeat embeds for batch size
-            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).unsqueeze(0)
 
         else:
 
@@ -293,10 +294,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             text_embeds, pooled_embeds = embeds
 
             # repeat embeds for batch size
-            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).unsqueeze(0)
 
             # repeat embeds for batch size
-            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype)
+            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype).unsqueeze(0)
 
             # Set up the additional time embeddings needed for SDXL
             self.cached_add_time_ids = self._get_add_time_ids(
@@ -306,7 +307,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             ).to(self.device)
 
             # repeat embeds for batch size
-            self.cached_add_time_ids = self.cached_add_time_ids
+            self.cached_add_time_ids = self.cached_add_time_ids.unsqueeze(0)
 
         # change dimension to fit batch size
         self.repeat_prompt()

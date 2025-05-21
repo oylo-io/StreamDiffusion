@@ -253,8 +253,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def repeat_image_prompt(self):
 
         # repeat for batching
-        if self.cached_ip_embeds:
-            self.cached_ip_embeds = self.cached_ip_embeds.repeat(self.batch_size, 1, 1, 1)
+        self.cached_ip_embeds = self.fit_to_dimension(self.cached_ip_embeds, self.batch_size)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
@@ -314,13 +313,15 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def repeat_prompt(self):
 
         # repeat normal prompt
-        self.cached_prompt_embeds = self.cached_prompt_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+        self.cached_prompt_embeds = self.fit_to_dimension(self.cached_prompt_embeds, self.batch_size)
+        # self.cached_prompt_embeds = self.fit_to_dimension(self.cached_prompt_embeds.to(dtype=self.dtype), self.batch_size)
 
         if self.is_sdxl:
 
             # repeat sdxl special prompts
-            self.cached_add_text_embeds = self.cached_add_text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1)
-            self.cached_add_time_ids = self.cached_add_time_ids.repeat(self.batch_size, 1)
+            self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds, self.batch_size)
+            # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
+            self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
     def add_noise(
         self,
@@ -618,3 +619,13 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_output = x_0_pred_out
 
         return x_output
+
+    @classmethod
+    def fit_to_dimension(cls, tensor, dimension):
+
+        if tensor:
+            if tensor.shape[0] > 1:
+                tensor = tensor[0].unsqueeze(0)
+            tensor = tensor.repeat(dimension, 1, 1, 1)
+
+        return tensor

@@ -460,7 +460,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     )
         # else:
         if self.cfg_type == "self" or self.cfg_type == "initialize":
-            noise_pred_uncond = self.stock_noise * 1.0
+            noise_pred_uncond = self.stock_noise * 1.5
             model_pred = noise_pred_uncond + 1.0 * (noise_pred_text - noise_pred_uncond)
         else:
             model_pred = noise_pred_text

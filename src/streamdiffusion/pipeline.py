@@ -459,7 +459,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #         noise_pred_text - noise_pred_uncond
         #     )
         # else:
-        model_pred = noise_pred_text
+        if self.cfg_type == "self" or self.cfg_type == "initialize":
+            noise_pred_uncond = self.stock_noise * 1.0
+            model_pred = noise_pred_uncond + 1.0 * (noise_pred_text - noise_pred_uncond)
+        else:
+            model_pred = noise_pred_text
 
         # compute the previous noisy sample x_t -> x_t-1
         # if self.use_denoising_batch:

@@ -253,7 +253,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def repeat_image_prompt(self):
 
         # repeat for batching
-        self.cached_ip_embeds = self.fit_to_dimension(self.cached_ip_embeds, self.batch_size)
+        if self.cached_ip_embeds is not None:
+            self.cached_ip_embeds = self.fit_to_dimension(self.cached_ip_embeds, self.batch_size)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
@@ -623,9 +624,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @classmethod
     def fit_to_dimension(cls, tensor, dimension):
 
-        if tensor:
-            if tensor.shape[0] > 1:
-                tensor = tensor[0].unsqueeze(0)
-            tensor = tensor.repeat(dimension, 1, 1, 1)
+        if tensor.shape[0] > 1:
+            tensor = tensor[0].unsqueeze(0)
+        tensor = tensor.repeat(dimension, 1, 1, 1)
 
         return tensor

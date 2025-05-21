@@ -53,6 +53,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
 
         # noise scheduler
+        self.seed = 1
         self.sub_timesteps = None
         self.sub_timesteps_pt = None
         self.noise_generator = torch.Generator()
@@ -210,6 +211,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # repeat prompt to match inference steps num
         if denoising_steps_num_changed:
+            self.set_noise(seed=self.seed)
             self.repeat_prompt()
             self.repeat_image_prompt()
 
@@ -217,6 +219,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def set_noise(self, seed: int = 1) -> None:
 
         # set seed
+        self.seed = seed
         self.noise_generator.manual_seed(seed)
 
         # init noise
@@ -297,7 +300,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).unsqueeze(0)
 
             # repeat embeds for batch size
-            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype).unsqueeze(0)
+            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype) # .unsqueeze(0)
 
             # Set up the additional time embeddings needed for SDXL
             self.cached_add_time_ids = self._get_add_time_ids(
@@ -307,7 +310,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             ).to(self.device)
 
             # repeat embeds for batch size
-            self.cached_add_time_ids = self.cached_add_time_ids.unsqueeze(0)
+            self.cached_add_time_ids = self.cached_add_time_ids # .unsqueeze(0)
 
         # change dimension to fit batch size
         self.repeat_prompt()

@@ -160,6 +160,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
 
+        # check if inference steps have changed
+        denoising_steps_num_changed = False
+        if len(t_list) != len(self.t_list):
+            denoising_steps_num_changed = True
+
         # update members
         self.t_list = t_list
         self.denoising_steps_num = len(t_list)
@@ -203,15 +208,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # update scheduler scalings
         self.scheduler_update_scalings()
 
-        # verify text prompt
-        if self.cached_prompt_embeds is None:
-            self.update_prompt('')
-
-        # verify image prompt
-        if self.cached_ip_embeds is None and self.ip_adapter_loaded:
-            black_image = PIL.Image.new('RGB', (224, 224), color=0)
-            self.update_image_prompt(black_image)
-            self.set_image_prompt_scale(0.0)
+        # repeat prompt to match inference steps num
+        if denoising_steps_num_changed:
+            self.repeat_prompt()
+            self.repeat_image_prompt()
 
     @torch.inference_mode()
     def set_noise(self, seed: int = 1) -> None:
@@ -245,10 +245,15 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_embeds = self.ip_encoder(image_features).image_embeds
 
         # projecting image embedding through ip adapter weights
-        image_embeds_projected = self.ip_projection(image_embeds)[0]
+        self.cached_ip_embeds = self.ip_projection(image_embeds)[0]
+
+        # repeat to fit batch size
+        self.repeat_image_prompt()
+
+    def repeat_image_prompt(self):
 
         # repeat for batching
-        self.cached_ip_embeds = image_embeds_projected.repeat(self.batch_size, 1, 1, 1)
+        self.cached_ip_embeds = self.cached_ip_embeds.repeat(self.batch_size, 1, 1, 1)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
@@ -279,7 +284,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             text_embeds = embeds[0]
 
             # repeat embeds for batch size
-            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype)
 
         else:
 
@@ -287,10 +292,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             text_embeds, pooled_embeds = embeds
 
             # repeat embeds for batch size
-            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype)
 
             # repeat embeds for batch size
-            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1)
+            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype)
 
             # Set up the additional time embeddings needed for SDXL
             self.cached_add_time_ids = self._get_add_time_ids(
@@ -300,6 +305,20 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             ).to(self.device)
 
             # repeat embeds for batch size
+            self.cached_add_time_ids = self.cached_add_time_ids
+
+        # change dimension to fit batch size
+        self.repeat_prompt()
+
+    def repeat_prompt(self):
+
+        # repeat normal prompt
+        self.cached_prompt_embeds = self.cached_prompt_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+
+        if self.is_sdxl:
+
+            # repeat sdxl special prompts
+            self.cached_add_text_embeds = self.cached_add_text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1)
             self.cached_add_time_ids = self.cached_add_time_ids.repeat(self.batch_size, 1)
 
     def add_noise(

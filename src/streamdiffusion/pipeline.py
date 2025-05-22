@@ -185,7 +185,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # load feature extractors
         self.canny_feature_extractor = CannyFeatureExtractor(self.device)
-        self.depth_feature_extractor = DepthFeatureExtractor("cpu")
+        self.depth_feature_extractor = DepthFeatureExtractor(self.device)
         self.pose_feature_extractor = PoseFeatureExtractor(self.device)
 
         # Load adapters

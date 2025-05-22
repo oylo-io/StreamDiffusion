@@ -1,6 +1,8 @@
 from typing import List, Optional, Union, Tuple, Literal
 
 import torch
+import torch.nn.functional as F
+
 import PIL.Image
 import numpy as np
 import torchvision.transforms as T
@@ -16,7 +18,7 @@ from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
-from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor, DepthFeatureExtractor
+from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor, DepthFeatureExtractor, PoseFeatureExtractor
 
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
@@ -90,9 +92,14 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # control
         self.canny_adapter = None
         self.depth_adapter = None
+        self.openpose_adapter = None
         self.control_multi_adapter = None
         self.canny_feature_extractor = None
         self.depth_feature_extractor = None
+        self.pose_feature_extractor = None
+        self.control_canny_scale = 1.0
+        self.control_depth_scale = 1.0
+        self.control_openpose_scale = 1.0
 
         # guidance
         self.cfg_type = cfg_type
@@ -173,18 +180,22 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self,
             depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
             canny_model = "TencentARC/t2i-adapter-canny-sdxl-1.0",
+            openpose_model="TencentARC/t2i-adapter-openpose-sdxl-1.0",
     ):
 
         # load feature extractors
         self.canny_feature_extractor = CannyFeatureExtractor(self.device)
-        self.depth_feature_extractor = DepthFeatureExtractor(self.device)
+        self.depth_feature_extractor = DepthFeatureExtractor("cpu")
+        self.pose_feature_extractor = PoseFeatureExtractor(self.device)
 
         # Load adapters
-        self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=torch.float16,)
-        self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=torch.float16,)
+        self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=self.dtype).to(self.device)
+        self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=self.dtype).to(self.device)
+        self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype).to(self.device)
 
         # Create MultiAdapter
-        self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter])
+        self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
+        # self.control_multi_adapter = self.openpose_adapter
 
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
@@ -358,28 +369,41 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
-    def generate_control_state(self, image: PIL.Image.Image):
+    def generate_control_state(self, image):
 
         # generate canny
         depth_image = self.depth_feature_extractor.generate(image)
+        pose_image = self.pose_feature_extractor.generate(image)
 
         # generate depth
         image_tensor = T.ToTensor()(image).unsqueeze(0).to("mps")
         canny_tensor = self.canny_feature_extractor.generate(image_tensor)
-        canny_image = T.ToPILImage()(canny_tensor[0])
+        # canny_image = T.ToPILImage()(canny_tensor[0])
 
         # # generate adapter states
         # canny_adapter_state = self.canny_adapter(canny_tensor)
         # depth_adapter_state = self.depth_adapter(depth_image)
 
-        adapter_state = self.control_multi_adapter([canny_image, depth_image], [0.8, 0.8])
+        # convert images to tensors
+        depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
+        pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
+
+        depth_tensor = depth_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
+        canny_tensor = canny_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
+        pose_tensor = pose_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
+
+        adapter_state = self.control_multi_adapter(
+            xs=[canny_tensor, depth_tensor, pose_tensor],
+            adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
+        )
+        # adapter_state = self.control_multi_adapter(pose_tensor)
         for k, v in enumerate(adapter_state):
-            adapter_state[k] = v    # diffusers pipeline does .clone(), not sure why
+            adapter_state[k] = v # * self.control_scale   # diffusers pipeline does .clone(), not sure why
 
         # repeat for batching
-        adapter_states = [state.repeat(self.batch_size, 1, 1, 1) for state in adapter_state]
+        # adapter_states = [state.repeat(self.batch_size, 1, 1, 1) for state in adapter_state]
 
-        return adapter_states
+        return adapter_state
 
     # repeat image prompt
     def add_noise(
@@ -687,6 +711,35 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_output = x_0_pred_out
 
         return x_output
+
+    @classmethod
+    def pre_process_image(cls, image: PIL.Image.Image, height, width, for_sd=True):
+
+        # Convert to tensor (values 0-255), keeping HWC format
+        image_pt = torch.from_numpy(np.array(image))
+
+        # Move to device first
+        image_pt = image_pt.to(device="mps", dtype=torch.float16)
+
+        # adds the "batch" dimension to make shape (B, H, W, C)
+        image_pt = image_pt.unsqueeze(0)
+
+        # Do permute on GPU (BHWC → BCHW)
+        image_pt = image_pt.permute(0, 3, 1, 2)
+
+        # resize
+        if image_pt.shape[2] != height or image_pt.shape[3] != width:
+            print(f'Resizing Image! size={image_pt.shape[3]}x{image_pt.shape[2]}, should be: {width}x{height}')
+            image_pt = F.interpolate(image_pt, size=(height, width), mode="bilinear", align_corners=False)
+
+        # Scale to 0-1 range (PyTorch standard)
+        image_pt = image_pt / 255.0
+
+        # Normalize to -1-1 range (StableDiffusion standard)
+        if for_sd:
+            image_pt = image_pt * 2 - 1
+
+        return image_pt
 
     @classmethod
     def fit_to_dimension(cls, tensor, dimension):

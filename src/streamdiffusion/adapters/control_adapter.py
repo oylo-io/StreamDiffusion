@@ -1,6 +1,7 @@
 import torch
 from kornia.filters import canny
 from transformers import pipeline
+from controlnet_aux import OpenposeDetector
 
 
 class CannyFeatureExtractor:
@@ -44,6 +45,15 @@ class DepthFeatureExtractor:
         )
 
     def generate(self, image):
-
         depth_map = self.depth_estimator(image)["depth"]
         return depth_map
+
+
+class PoseFeatureExtractor:
+    def __init__(self, device):
+        self.device = device
+        self.detector = OpenposeDetector.from_pretrained('lllyasviel/Annotators')
+
+    def generate(self, image):
+        pose_image = self.detector(image, hand_and_face=True)  # Include hands and face for better control
+        return pose_image

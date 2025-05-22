@@ -55,5 +55,5 @@ class PoseFeatureExtractor:
         self.detector = OpenposeDetector.from_pretrained('lllyasviel/Annotators')
 
     def generate(self, image):
-        pose_image = self.detector(image, hand_and_face=True)  # Include hands and face for better control
+        pose_image = self.detector(image, include_hands=True, include_face=True)  # Include hands and face for better control
         return pose_image

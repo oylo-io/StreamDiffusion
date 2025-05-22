@@ -268,7 +268,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             (self.batch_size, 4, self.latent_height, self.latent_width),
             generator=self.noise_generator,
         ).to(device=self.device, dtype=self.dtype)
-        self.stock_noise = torch.zeros_like(self.init_noise)
+
+        self.stock_noise = self.init_noise.clone()
 
     @torch.inference_mode()
     def update_image_prompt(self, image: PIL.Image.Image) -> None:
@@ -376,7 +377,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         pose_image = self.pose_feature_extractor.generate(image)
 
         # generate depth
-        image_tensor = T.ToTensor()(image).unsqueeze(0).to("mps")
+        image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
         canny_tensor = self.canny_feature_extractor.generate(image_tensor)
         # canny_image = T.ToPILImage()(canny_tensor[0])
 
@@ -388,9 +389,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
         pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
 
-        depth_tensor = depth_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
-        canny_tensor = canny_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
-        pose_tensor = pose_tensor.to(device="mps", dtype=self.control_multi_adapter.dtype)
+        depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
 
         adapter_state = self.control_multi_adapter(
             xs=[canny_tensor, depth_tensor, pose_tensor],
@@ -633,6 +634,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.stock_noise = torch.cat(
                 (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
             )
+        else:
+            # Single-step: Reset stock_noise to prevent accumulation
+            if self.cfg_type == "self" or self.cfg_type == "initialize":
+                # Reset stock_noise for single-step to prevent accumulation
+                self.stock_noise = self.init_noise.clone()
 
         x_t_latent = x_t_latent.to(self.device)
         t_list = t_list.to(self.device)
@@ -712,14 +718,13 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         return x_output
 
-    @classmethod
-    def pre_process_image(cls, image: PIL.Image.Image, height, width, for_sd=True):
+    def pre_process_image(self, image: PIL.Image.Image, height, width, for_sd=True):
 
         # Convert to tensor (values 0-255), keeping HWC format
         image_pt = torch.from_numpy(np.array(image))
 
         # Move to device first
-        image_pt = image_pt.to(device="mps", dtype=torch.float16)
+        image_pt = image_pt.to(device=self.device, dtype=torch.float16)
 
         # adds the "batch" dimension to make shape (B, H, W, C)
         image_pt = image_pt.unsqueeze(0)

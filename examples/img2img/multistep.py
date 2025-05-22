@@ -6,7 +6,7 @@ from diffusers import StableDiffusionXLPipeline, AutoencoderTiny
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.image_utils import postprocess_image
-from streamdiffusion.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
+from streamdiffusion.adapters.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
 
 
 def add_label(image, text):

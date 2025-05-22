@@ -5,7 +5,7 @@ import torch
 from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from streamdiffusion.acceleration.tensorrt.models import UNetXLTurboIPAdapter
-from streamdiffusion.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
+from streamdiffusion.adapters.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
 
 
 class UNetXLWrapper(torch.nn.Module):

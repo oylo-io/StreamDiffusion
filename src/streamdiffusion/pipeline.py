@@ -3,6 +3,7 @@ from typing import List, Optional, Union, Tuple, Literal
 import torch
 import PIL.Image
 import numpy as np
+import torchvision.transforms as T
 
 from compel import Compel, ReturnedEmbeddingsType
 
@@ -11,9 +12,11 @@ from huggingface_hub import hf_hub_download
 
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
-from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
+from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, T2IAdapter, MultiAdapter
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+
+from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor, DepthFeatureExtractor
 
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
@@ -84,6 +87,13 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.ip_projection = None
         self.ip_feature_extractor = None
 
+        # control
+        self.canny_adapter = None
+        self.depth_adapter = None
+        self.control_multi_adapter = None
+        self.canny_feature_extractor = None
+        self.depth_feature_extractor = None
+
         # guidance
         self.cfg_type = cfg_type
         self.c_out = None
@@ -99,6 +109,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # batching
         self.x_t_latent_buffer = None
+        self.control_states_buffer = None
         self.frame_bff_size = frame_buffer_size
         self._denoising_steps_num = len(t_index_list)
         self.batch_size = self._denoising_steps_num * frame_buffer_size
@@ -158,6 +169,23 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_projection_layer = self._convert_ip_adapter_image_proj_to_diffusers(state_dict, low_cpu_mem_usage=low_cpu_mem_usage)
         self.ip_projection = MultiIPAdapterImageProjection([image_projection_layer]).to(self.device, dtype=self.dtype)
 
+    def load_control_adapter(
+            self,
+            depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
+            canny_model = "TencentARC/t2i-adapter-canny-sdxl-1.0",
+    ):
+
+        # load feature extractors
+        self.canny_feature_extractor = CannyFeatureExtractor(self.device)
+        self.depth_feature_extractor = DepthFeatureExtractor(self.device)
+
+        # Load adapters
+        self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=torch.float16,)
+        self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=torch.float16,)
+
+        # Create MultiAdapter
+        self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter])
+
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
 
@@ -192,8 +220,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 dtype=self.dtype,
                 device=self.device,
             )
+            self.control_states_buffer = None
         else:
             self.x_t_latent_buffer = None
+            self.control_states_buffer = None
 
         # update sub timesteps
         self.sub_timesteps = [self.timesteps[t] for t in t_list]
@@ -328,6 +358,30 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
+    def generate_control_state(self, image: PIL.Image.Image):
+
+        # generate canny
+        depth_image = self.depth_feature_extractor.generate(image)
+
+        # generate depth
+        image_tensor = T.ToTensor()(image).unsqueeze(0).to("mps")
+        canny_tensor = self.canny_feature_extractor.generate(image_tensor)
+        canny_image = T.ToPILImage()(canny_tensor[0])
+
+        # # generate adapter states
+        # canny_adapter_state = self.canny_adapter(canny_tensor)
+        # depth_adapter_state = self.depth_adapter(depth_image)
+
+        adapter_state = self.control_multi_adapter([canny_image, depth_image], [0.8, 0.8])
+        for k, v in enumerate(adapter_state):
+            adapter_state[k] = v    # diffusers pipeline does .clone(), not sure why
+
+        # repeat for batching
+        adapter_states = [state.repeat(self.batch_size, 1, 1, 1) for state in adapter_state]
+
+        return adapter_states
+
+    # repeat image prompt
     def add_noise(
         self,
         original_samples: torch.Tensor,
@@ -421,7 +475,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         added_cond_kwargs,
         cross_attention_kwargs,
         idx: Optional[int] = None,
+        down_intrablock_additional_residuals = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
         #     x_t_latent_plus_uc = torch.concat([x_t_latent[0:1], x_t_latent], dim=0)
         #     t_list = torch.concat([t_list[0:1], t_list], dim=0)
@@ -437,6 +493,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             encoder_hidden_states=self.cached_prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
+            down_intrablock_additional_residuals=down_intrablock_additional_residuals,
             return_dict=False,
         )[0]
 
@@ -522,10 +579,15 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control = None) -> torch.Tensor:
         added_cond_kwargs = {}
         cross_attention_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
+
+        # Generate control states once, before unet_step
+        down_intrablock_additional_residuals = None
+        if control is not None:
+            down_intrablock_additional_residuals = self.generate_control_state(control)
 
         # Add IP-Adapter image-embeds and scale
         if self.cached_ip_strength is not None and self.cached_ip_embeds is not None:
@@ -554,7 +616,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_t_latent,
             t_list,
             added_cond_kwargs=added_cond_kwargs,
-            cross_attention_kwargs=cross_attention_kwargs
+            cross_attention_kwargs=cross_attention_kwargs,
+            down_intrablock_additional_residuals=down_intrablock_additional_residuals
         )
 
         if self._denoising_steps_num > 1:
@@ -599,14 +662,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def __call__(
         self,
         x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
+        control: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
         encode_input: bool = True,
         decode_output: bool = True
     ) -> torch.Tensor:
-
-        # pre process
-        # x = self.image_processor.preprocess(x, self.height, self.width).to(
-        #     device=self.device, dtype=self.dtype
-        # )
 
         # check if input should be encoded
         if encode_input:
@@ -617,7 +676,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_t_latent = x
 
         # diffusion
-        x_0_pred_out = self.predict_x0_batch(x_t_latent)
+        x_0_pred_out = self.predict_x0_batch(x_t_latent, control)
 
         # check if output should be decoded
         if decode_output:

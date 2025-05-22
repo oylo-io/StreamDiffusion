@@ -6,7 +6,7 @@ from diffusers import AutoencoderTiny, StableDiffusionPipeline, StableDiffusionX
 
 from streamdiffusion import StreamDiffusion
 from streamdiffusion.acceleration.tensorrt.compile import accelerate_with_tensorrt
-from streamdiffusion.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
+from streamdiffusion.adapters.ip_adapter import patch_attention_processors, patch_unet_ip_adapter_projection
 
 
 class UNetXLWrapper(torch.nn.Module):

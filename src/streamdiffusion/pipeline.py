@@ -3,7 +3,6 @@ from typing import List, Optional, Union, Tuple, Literal
 
 import torch
 import PIL.Image
-import numpy as np
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -59,8 +58,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.sub_timesteps = None
         self.sub_timesteps_pt = None
         self.noise_generator = torch.Generator()
-        self.scheduler.set_timesteps(original_inference_steps, self.device)
         self.timesteps = self.scheduler.timesteps.to(self.device)
+        self.scheduler.set_timesteps(original_inference_steps, self.device)
 
         # text prompt encoding
         self.cached_prompt_embeds = None
@@ -95,8 +94,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.depth_feature_extractor = None
         self.pose_feature_extractor = None
         self.control_canny_scale = 1.0
-        self.control_depth_scale = 1.0
-        self.control_openpose_scale = 1.0
+        # self.control_depth_scale = 1.0
+        # self.control_openpose_scale = 1.0
 
         # guidance
         self.cfg_type = cfg_type
@@ -367,6 +366,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
+    @torch.inference_mode()
     def generate_control_state(self, image_tensor):
         # import time  # Import time module for timing
 
@@ -404,7 +404,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
         # print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
 
-        start_time = time.time()
+        # start_time = time.time()
         # adapter_state = self.control_multi_adapter(
         #     xs=[canny_tensor, depth_tensor, pose_tensor],
         #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
@@ -618,22 +618,26 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor, control : torch.Tensor = None) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control: torch.Tensor = None) -> torch.Tensor:
+
+        # prepare args for unet
         added_cond_kwargs = {}
         cross_attention_kwargs = {}
+
+        # get previous latent buffer
         prev_latent_batch = self.x_t_latent_buffer
 
-        # generate control states
-        down_intrablock_additional_residuals = None
+        # control adapter
+        control_states = None
         if control is not None:
-            down_intrablock_additional_residuals = self.generate_control_state(control)
+            control_states = self.generate_control_state(control)
 
-        # Add IP-Adapter image-embeds and scale
+        # image-prompt adapter
         if self.cached_ip_strength is not None and self.cached_ip_embeds is not None:
             added_cond_kwargs["image_embeds"] = self.cached_ip_embeds
             cross_attention_kwargs["ip_adapter_scale"] = self.cached_ip_strength
 
-        # Handle SDXL specific added conditions
+        # SDXL specific additional conditioning
         if self.is_sdxl:
             base_added_cond_kwargs = {
                 "text_embeds": self.cached_add_text_embeds,
@@ -641,21 +645,51 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             }
             added_cond_kwargs.update(base_added_cond_kwargs)
 
-        # if self.use_denoising_batch:
-        t_list = self.sub_timesteps_pt
+        # handle batching
         if self._denoising_steps_num > 1:
-            x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
+
+            # handle noise accumulation
             self.stock_noise = torch.cat(
                 (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
             )
+
+            # handle latent batching
+            x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
+
+            # handle control states batching
+            if control_states is not None:
+
+                # Initialize buffer on first use
+                if self.control_states_buffer is None:
+                    self.control_states_buffer = [
+                        self.fit_to_dimension(state, self._denoising_steps_num - 1)
+                        for state in control_states
+                    ]
+
+                # Concatenate current control states with buffer
+                down_intrablock_additional_residuals = [
+                    torch.cat([state, buffered_state], dim=0)
+                    for state, buffered_state in zip(control_states, self.control_states_buffer)
+                ]
+            else:
+                down_intrablock_additional_residuals = None
+
         else:
             # Single-step: Reset stock_noise to prevent accumulation
             if self.cfg_type == "self" or self.cfg_type == "initialize":
+
                 # Reset stock_noise for single-step to prevent accumulation
                 self.stock_noise = self.init_noise.clone()
 
-        x_t_latent = x_t_latent.to(self.device)
+            # Single-step control states (no batching needed)
+            down_intrablock_additional_residuals = control_states
+
+        # prepare arguments for unet
+        t_list = self.sub_timesteps_pt
         t_list = t_list.to(self.device)
+        x_t_latent = x_t_latent.to(self.device)
+
+        # unet
         x_0_pred_batch, model_pred = self.unet_step(
             x_t_latent,
             t_list,
@@ -664,41 +698,31 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             down_intrablock_additional_residuals=down_intrablock_additional_residuals
         )
 
+        # handle batching for next iteration
         if self._denoising_steps_num > 1:
+
+            # get latest denoised latent
             x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
             if self.do_add_noise:
                 self.x_t_latent_buffer = (
-                    self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
-                    + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
+                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
+                        + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
                 )
             else:
                 self.x_t_latent_buffer = (
-                    self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
+                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                 )
+
+            # update control states buffer for next iteration
+            if control_states is not None and self.control_states_buffer is not None:
+                self.control_states_buffer = [
+                    state[1:] for state in down_intrablock_additional_residuals
+                ]
         else:
+
             x_0_pred_out = x_0_pred_batch
             self.x_t_latent_buffer = None
-        # else:
-        #     self.init_noise = x_t_latent
-        #     for idx, t in enumerate(self.sub_timesteps_pt):
-        #         t = t.view(
-        #             1,
-        #         ).repeat(
-        #             self.frame_bff_size,
-        #         )
-        #         x_0_pred, model_pred = self.unet_step(x_t_latent, t, idx=idx, added_cond_kwargs=added_cond_kwargs)
-        #         if idx < len(self.sub_timesteps_pt) - 1:
-        #             if self.do_add_noise:
-        #                 x_t_latent = self.alpha_prod_t_sqrt[
-        #                     idx + 1
-        #                 ] * x_0_pred + self.beta_prod_t_sqrt[
-        #                     idx + 1
-        #                 ] * torch.randn_like(
-        #                     x_0_pred, device=self.device, dtype=self.dtype
-        #                 )
-        #             else:
-        #                 x_t_latent = self.alpha_prod_t_sqrt[idx + 1] * x_0_pred
-        #     x_0_pred_out = x_0_pred
+            self.control_states_buffer = None
 
         return x_0_pred_out
 

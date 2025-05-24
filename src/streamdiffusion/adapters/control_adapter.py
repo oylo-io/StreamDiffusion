@@ -6,24 +6,22 @@ from controlnet_aux import OpenposeDetector
 
 class CannyFeatureExtractor:
 
-    def __init__(self, device, low_threshold=0.1, high_threshold=0.2):
+    def __init__(self, device, low_threshold=0.2, high_threshold=0.3):
 
         self.device = device
         self.low_threshold = low_threshold
         self.high_threshold = high_threshold
 
+    @torch.inference_mode()
     def generate(self, image_tensor):
 
-        # Convert to grayscale if it's a color image
-        if image_tensor.shape[1] == 3:
-            # RGB to grayscale conversion weights
-            weights = torch.tensor([0.299, 0.587, 0.114], device=self.device).view(1, 3, 1, 1)
-            gray_image = (image_tensor * weights).sum(dim=1, keepdim=True)
-        else:
-            gray_image = image_tensor
-
         # Apply Canny edge detection
-        edges, _ = canny(gray_image, low_threshold=self.low_threshold, high_threshold=self.high_threshold)
+        edges, _ = canny(
+            image_tensor,
+            hysteresis=False,
+            low_threshold=self.low_threshold,
+            high_threshold=self.high_threshold
+        )
 
         # Convert to 3-channel format for the adapter
         edges_3ch = torch.cat([edges, edges, edges], dim=1)

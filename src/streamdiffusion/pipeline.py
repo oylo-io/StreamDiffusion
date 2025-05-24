@@ -1,24 +1,21 @@
+import time
 from typing import List, Optional, Union, Tuple, Literal
 
 import torch
-import torch.nn.functional as F
-
 import PIL.Image
 import numpy as np
-import torchvision.transforms as T
-
-from compel import Compel, ReturnedEmbeddingsType
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
+from compel import Compel, ReturnedEmbeddingsType
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
 from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, T2IAdapter, MultiAdapter
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
-from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor, DepthFeatureExtractor, PoseFeatureExtractor
+from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor
 
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
@@ -93,7 +90,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.canny_adapter = None
         self.depth_adapter = None
         self.openpose_adapter = None
-        self.control_multi_adapter = None
+        self.control_adapter = None
         self.canny_feature_extractor = None
         self.depth_feature_extractor = None
         self.pose_feature_extractor = None
@@ -178,24 +175,24 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     def load_control_adapter(
             self,
-            depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
             canny_model = "TencentARC/t2i-adapter-canny-sdxl-1.0",
+            depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
             openpose_model="TencentARC/t2i-adapter-openpose-sdxl-1.0",
     ):
 
         # load feature extractors
         self.canny_feature_extractor = CannyFeatureExtractor(self.device)
-        self.depth_feature_extractor = DepthFeatureExtractor(self.device if self.device == "cuda" else "cpu")
-        self.pose_feature_extractor = PoseFeatureExtractor(self.device)
+        # self.depth_feature_extractor = DepthFeatureExtractor(self.device if self.device == "cuda" else "cpu")
+        # self.pose_feature_extractor = PoseFeatureExtractor(self.device)
 
         # Load adapters
-        self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=self.dtype).to(self.device)
         self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=self.dtype).to(self.device)
-        self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype).to(self.device)
+        # self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=self.dtype).to(self.device)
+        # self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype).to(self.device)
 
-        # Create MultiAdapter
-        # self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
-        self.control_multi_adapter = self.canny_adapter
+        # Create adapter
+        # self.control_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
+        self.control_adapter = self.canny_adapter
 
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
@@ -370,48 +367,49 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
-    def generate_control_state(self, image):
-        import time  # Import time module for timing
+    def generate_control_state(self, image_tensor):
+        # import time  # Import time module for timing
 
-        # Generate canny
-        start_time = time.time()
+        # Generate depth
+        # start_time = time.time()
         # depth_image = self.depth_feature_extractor.generate(image)
-        print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
+        # print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
 
-        start_time = time.time()
+        # Generate pose
+        # start_time = time.time()
         # pose_image = self.pose_feature_extractor.generate(image)
-        print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
+        # print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # image to tensor
-        start_time = time.time()
-        image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
-        print(f"Image to tensor conversion took {time.time() - start_time:.4f} seconds.")
+        # start_time = time.time()
+        # image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
+        # print(f"Image to tensor conversion took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
         canny_tensor = self.canny_feature_extractor.generate(image_tensor)
         print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # Convert images to tensors
-        start_time = time.time()
+        # start_time = time.time()
         # depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
-        print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
+        # print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
 
-        start_time = time.time()
+        # start_time = time.time()
         # pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
-        print(f"Pose image preprocessing took {time.time() - start_time:.4f} seconds.")
+        # print(f"Pose image preprocessing took {time.time() - start_time:.4f} seconds.")
 
-        start_time = time.time()
+        # start_time = time.time()
         # depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
-        canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        # canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_adapter.dtype)
         # pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
-        print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
+        # print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
         # adapter_state = self.control_multi_adapter(
         #     xs=[canny_tensor, depth_tensor, pose_tensor],
         #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
         # )
-        adapter_state = self.control_multi_adapter(canny_tensor)
+        adapter_state = self.control_adapter(canny_tensor)
         print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
@@ -619,12 +617,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor, control = None) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control : torch.Tensor = None) -> torch.Tensor:
         added_cond_kwargs = {}
         cross_attention_kwargs = {}
         prev_latent_batch = self.x_t_latent_buffer
 
-        # Generate control states once, before unet_step
+        # generate control states
         down_intrablock_additional_residuals = None
         if control is not None:
             down_intrablock_additional_residuals = self.generate_control_state(control)
@@ -706,8 +704,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @torch.inference_mode()
     def __call__(
         self,
-        x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
-        control: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
+        input: torch.Tensor = None,
+        control: torch.Tensor = None,
         encode_input: bool = True,
         decode_output: bool = True
     ) -> torch.Tensor:
@@ -715,10 +713,14 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # check if input should be encoded
         if encode_input:
 
+            # pre-process image
+            # normalize from [0, 1] (PyTorch standard) to [-1, 1] (StableDiffusion standard)
+            x = input * 2 - 1
+
             # encode with VAE
             x_t_latent = self.encode_image(x)
         else:
-            x_t_latent = x
+            x_t_latent = input
 
         # diffusion
         x_0_pred_out = self.predict_x0_batch(x_t_latent, control)
@@ -732,34 +734,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_output = x_0_pred_out
 
         return x_output
-
-    def pre_process_image(self, image: PIL.Image.Image, height, width, for_sd=True):
-
-        # Convert to tensor (values 0-255), keeping HWC format
-        image_pt = torch.from_numpy(np.array(image))
-
-        # Move to device first
-        image_pt = image_pt.to(device=self.device, dtype=torch.float16)
-
-        # adds the "batch" dimension to make shape (B, H, W, C)
-        image_pt = image_pt.unsqueeze(0)
-
-        # Do permute on GPU (BHWC → BCHW)
-        image_pt = image_pt.permute(0, 3, 1, 2)
-
-        # resize
-        if image_pt.shape[2] != height or image_pt.shape[3] != width:
-            print(f'Resizing Image! size={image_pt.shape[3]}x{image_pt.shape[2]}, should be: {width}x{height}')
-            image_pt = F.interpolate(image_pt, size=(height, width), mode="bilinear", align_corners=False)
-
-        # Scale to 0-1 range (PyTorch standard)
-        image_pt = image_pt / 255.0
-
-        # Normalize to -1-1 range (StableDiffusion standard)
-        if for_sd:
-            image_pt = image_pt * 2 - 1
-
-        return image_pt
 
     @classmethod
     def fit_to_dimension(cls, tensor, dimension):

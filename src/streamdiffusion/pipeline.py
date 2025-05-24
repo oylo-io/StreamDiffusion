@@ -599,12 +599,13 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         return add_time_ids
 
     @torch.inference_mode()
-    def encode_image(self, image_tensors: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
-        image_tensors = image_tensors.to(
-            device=self.device,
-            dtype=self.vae.dtype,
-        )
-        img_latent = retrieve_latents(self.vae.encode(image_tensors), self.noise_generator)
+    def encode_image(self, image_tensor: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
+
+        # pre-process image
+        # normalize from [0, 1] (PyTorch standard) to [-1, 1] (StableDiffusion standard)
+        sd_image_tensor = image_tensor * 2 - 1
+
+        img_latent = retrieve_latents(self.vae.encode(sd_image_tensor), self.noise_generator)
         img_latent = img_latent * self.vae.config.scaling_factor
 
         if add_init_noise:
@@ -713,12 +714,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # check if input should be encoded
         if encode_input:
 
-            # pre-process image
-            # normalize from [0, 1] (PyTorch standard) to [-1, 1] (StableDiffusion standard)
-            x = input * 2 - 1
-
             # encode with VAE
-            x_t_latent = self.encode_image(x)
+            x_t_latent = self.encode_image(input)
         else:
             x_t_latent = input
 

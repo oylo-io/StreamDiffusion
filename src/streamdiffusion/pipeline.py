@@ -194,8 +194,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype).to(self.device)
 
         # Create MultiAdapter
-        self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
-        # self.control_multi_adapter = self.openpose_adapter
+        # self.control_multi_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
+        self.control_multi_adapter = self.canny_adapter
 
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
@@ -375,14 +375,14 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # Generate canny
         start_time = time.time()
-        depth_image = self.depth_feature_extractor.generate(image)
+        # depth_image = self.depth_feature_extractor.generate(image)
         print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
-        pose_image = self.pose_feature_extractor.generate(image)
+        # pose_image = self.pose_feature_extractor.generate(image)
         print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
 
-        # Generate depth
+        # image to tensor
         start_time = time.time()
         image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
         print(f"Image to tensor conversion took {time.time() - start_time:.4f} seconds.")
@@ -393,29 +393,30 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # Convert images to tensors
         start_time = time.time()
-        depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
+        # depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
         print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
-        pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
+        # pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
         print(f"Pose image preprocessing took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
-        depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        # depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
         canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
-        pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        # pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
         print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
-        adapter_state = self.control_multi_adapter(
-            xs=[canny_tensor, depth_tensor, pose_tensor],
-            adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
-        )
+        # adapter_state = self.control_multi_adapter(
+        #     xs=[canny_tensor, depth_tensor, pose_tensor],
+        #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
+        # )
+        adapter_state = self.control_multi_adapter(canny_tensor)
         print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
         for k, v in enumerate(adapter_state):
-            adapter_state[k] = v
+            adapter_state[k] = v * self.control_canny_scale
         print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
         return adapter_state

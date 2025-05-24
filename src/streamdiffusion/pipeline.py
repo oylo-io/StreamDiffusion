@@ -371,38 +371,52 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
     def generate_control_state(self, image):
+        import time  # Import time module for timing
 
-        # generate canny
+        # Generate canny
+        start_time = time.time()
         depth_image = self.depth_feature_extractor.generate(image)
+        print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
+
+        start_time = time.time()
         pose_image = self.pose_feature_extractor.generate(image)
+        print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
 
-        # generate depth
+        # Generate depth
+        start_time = time.time()
         image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
+        print(f"Image to tensor conversion took {time.time() - start_time:.4f} seconds.")
+
+        start_time = time.time()
         canny_tensor = self.canny_feature_extractor.generate(image_tensor)
-        # canny_image = T.ToPILImage()(canny_tensor[0])
+        print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
 
-        # # generate adapter states
-        # canny_adapter_state = self.canny_adapter(canny_tensor)
-        # depth_adapter_state = self.depth_adapter(depth_image)
-
-        # convert images to tensors
+        # Convert images to tensors
+        start_time = time.time()
         depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
-        pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
+        print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
 
+        start_time = time.time()
+        pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
+        print(f"Pose image preprocessing took {time.time() - start_time:.4f} seconds.")
+
+        start_time = time.time()
         depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
         canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
         pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
+        print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
 
+        start_time = time.time()
         adapter_state = self.control_multi_adapter(
             xs=[canny_tensor, depth_tensor, pose_tensor],
             adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
         )
-        # adapter_state = self.control_multi_adapter(pose_tensor)
-        for k, v in enumerate(adapter_state):
-            adapter_state[k] = v # * self.control_scale   # diffusers pipeline does .clone(), not sure why
+        print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
-        # repeat for batching
-        # adapter_states = [state.repeat(self.batch_size, 1, 1, 1) for state in adapter_state]
+        start_time = time.time()
+        for k, v in enumerate(adapter_state):
+            adapter_state[k] = v
+        print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
         return adapter_state
 

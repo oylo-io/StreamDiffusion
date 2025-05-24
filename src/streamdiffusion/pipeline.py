@@ -58,8 +58,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.sub_timesteps = None
         self.sub_timesteps_pt = None
         self.noise_generator = torch.Generator()
-        self.timesteps = self.scheduler.timesteps.to(self.device)
         self.scheduler.set_timesteps(original_inference_steps, self.device)
+        self.timesteps = self.scheduler.timesteps.to(self.device)
 
         # text prompt encoding
         self.cached_prompt_embeds = None

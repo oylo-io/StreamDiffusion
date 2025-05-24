@@ -387,7 +387,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         start_time = time.time()
         canny_tensor = self.canny_feature_extractor.generate(image_tensor)
-        print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
+        # print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # Convert images to tensors
         # start_time = time.time()
@@ -410,12 +410,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
         # )
         adapter_state = self.control_adapter(canny_tensor)
-        print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
+        # print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
         for k, v in enumerate(adapter_state):
             adapter_state[k] = v * self.control_canny_scale
-        print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
+        # print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
         return adapter_state
 

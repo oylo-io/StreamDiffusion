@@ -1,23 +1,30 @@
 import torch
+
 from kornia.filters import canny
+from kornia.enhance import adjust_contrast
+
 # from transformers import pipeline
 # from controlnet_aux import OpenposeDetector
 
 
 class CannyFeatureExtractor:
 
-    def __init__(self, device, low_threshold=0.1, high_threshold=0.2):
+    def __init__(self, device, low_threshold=0.1, high_threshold=0.2, contrast_factor=1.5):
 
         self.device = device
         self.low_threshold = low_threshold
         self.high_threshold = high_threshold
+        self.contrast_factor = contrast_factor
 
     @torch.inference_mode()
     def generate(self, image_tensor):
 
+        # increase contrast
+        contrasted = adjust_contrast(image_tensor, self.contrast_factor)
+
         # Apply Canny edge detection
         edges, _ = canny(
-            image_tensor,
+            contrasted,
             hysteresis=False,
             low_threshold=self.low_threshold,
             high_threshold=self.high_threshold

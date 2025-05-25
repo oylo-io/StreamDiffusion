@@ -91,8 +91,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.openpose_adapter = None
         self.control_adapter = None
         self.canny_feature_extractor = None
-        self.depth_feature_extractor = None
-        self.pose_feature_extractor = None
+        # self.depth_feature_extractor = None
+        # self.pose_feature_extractor = None
         self.control_canny_scale = 1.0
         # self.control_depth_scale = 1.0
         # self.control_openpose_scale = 1.0

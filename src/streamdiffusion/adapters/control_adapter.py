@@ -6,7 +6,7 @@ from kornia.filters import canny
 
 class CannyFeatureExtractor:
 
-    def __init__(self, device, low_threshold=0.05, high_threshold=0.15):
+    def __init__(self, device, low_threshold=0.1, high_threshold=0.2):
 
         self.device = device
         self.low_threshold = low_threshold

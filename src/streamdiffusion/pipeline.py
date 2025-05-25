@@ -512,7 +512,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         t_list: Union[torch.Tensor, list[int]],
         added_cond_kwargs,
         cross_attention_kwargs,
-        idx: Optional[int] = None,
         down_intrablock_additional_residuals = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -561,11 +560,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             model_pred = noise_pred_text
 
         # compute the previous noisy sample x_t -> x_t-1
-        # if self.use_denoising_batch:
-        denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
+        denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent)
         if self.cfg_type == "self" or self.cfg_type == "initialize":
             scaled_noise = self.beta_prod_t_sqrt * self.stock_noise
-            delta_x = self.scheduler_step_batch(model_pred, scaled_noise, idx)
+            delta_x = self.scheduler_step_batch(model_pred, scaled_noise)
             alpha_next = torch.concat(
                 [
                     self.alpha_prod_t_sqrt[1:],
@@ -586,10 +584,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 [self.init_noise[1:], self.init_noise[0:1]], dim=0
             )
             self.stock_noise = init_noise + delta_x
-
-        # else:
-        #     # denoised_batch = self.scheduler.step(model_pred, t_list[0], x_t_latent).denoised
-        #     denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
 
         return denoised_batch, model_pred
 
@@ -667,12 +661,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                     ]
 
                 # Concatenate current control states with buffer
-                down_intrablock_additional_residuals = [
+                control_states = [
                     torch.cat([state, buffered_state], dim=0)
                     for state, buffered_state in zip(control_states, self.control_states_buffer)
                 ]
-            else:
-                down_intrablock_additional_residuals = None
 
         else:
             # Single-step: Reset stock_noise to prevent accumulation
@@ -681,13 +673,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 # Reset stock_noise for single-step to prevent accumulation
                 self.stock_noise = self.init_noise.clone()
 
-            # Single-step control states (no batching needed)
-            down_intrablock_additional_residuals = control_states
 
         # prepare arguments for unet
         t_list = self.sub_timesteps_pt
         t_list = t_list.to(self.device)
-        x_t_latent = x_t_latent.to(self.device)
+        down_intrablock_additional_residuals = [s.clone() for s in control_states]
 
         # unet
         x_0_pred_batch, model_pred = self.unet_step(
@@ -716,7 +706,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # update control states buffer for next iteration
             if control_states is not None and self.control_states_buffer is not None:
                 self.control_states_buffer = [
-                    state[1:] for state in down_intrablock_additional_residuals
+                    state[1:] for state in control_states
                 ]
         else:
 

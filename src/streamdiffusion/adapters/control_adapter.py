@@ -9,7 +9,7 @@ from kornia.enhance import adjust_contrast
 
 class CannyFeatureExtractor:
 
-    def __init__(self, device, low_threshold=0.1, high_threshold=0.2, contrast_factor=1.5):
+    def __init__(self, device, low_threshold=0.1, high_threshold=0.2, contrast_factor=2.5):
 
         self.device = device
         self.low_threshold = low_threshold

@@ -15,6 +15,7 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img impo
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
 from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor
+from streamdiffusion.unet import T2IAdapterUNetWrapper
 
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
@@ -91,51 +92,35 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.openpose_adapter = None
         self.control_adapter = None
         self.canny_feature_extractor = None
+        self.control_canny_scale = 1.0
         # self.depth_feature_extractor = None
         # self.pose_feature_extractor = None
-        self.control_canny_scale = 1.0
         # self.control_depth_scale = 1.0
         # self.control_openpose_scale = 1.0
 
         # guidance
         self.cfg_type = cfg_type
+        self.init_noise = None
+        self.stock_noise = None
         self.c_out = None
         self.c_skip = None
         self.alpha_prod_t_sqrt = None
         self.beta_prod_t_sqrt = None
-        self.init_noise = None
-        self.stock_noise = None
 
         # inference steps
         self.t_list = t_index_list
         self.do_add_noise = do_add_noise
 
         # batching
-        self.x_t_latent_buffer = None
+        self.latent_buffer = None
         self.control_states_buffer = None
         self.frame_bff_size = frame_buffer_size
-        self._denoising_steps_num = len(t_index_list)
-        self.batch_size = self._denoising_steps_num * frame_buffer_size
-        # if self.use_denoising_batch:
-        #     self.batch_size = self._denoising_steps_num * frame_buffer_size
-        # else:
-        #     self.batch_size = frame_buffer_size
+        self.denoising_steps_num = len(t_index_list)
+        self.batch_size = self.denoising_steps_num * frame_buffer_size
 
     @property
     def is_sdxl(self):
         return type(self.pipe) is StableDiffusionXLPipeline
-
-    # @property
-    # def use_denoising_batch(self):
-    #     return self._denoising_steps_num > 1
-
-    @property
-    def denoising_steps_num(self):
-        return self._denoising_steps_num
-
-    @denoising_steps_num.setter
-    def denoising_steps_num(self, value):
-        self._denoising_steps_num = value
 
     @property
     def ip_adapter_loaded(self):
@@ -174,6 +159,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     def load_control_adapter(
             self,
+            wrap_unet: bool,
             canny_model = "TencentARC/t2i-adapter-canny-sdxl-1.0",
             depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
             openpose_model="TencentARC/t2i-adapter-openpose-sdxl-1.0",
@@ -193,6 +179,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # self.control_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
         self.control_adapter = self.canny_adapter
 
+        # wrap unet with T2IAdapter wrapper
+        if wrap_unet:
+            self.unet = T2IAdapterUNetWrapper(self.pipe.unet)
+
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
 
@@ -206,30 +196,16 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.denoising_steps_num = len(t_list)
 
         # update batch size
-        self.batch_size = self._denoising_steps_num * self.frame_bff_size
-        # if not self.use_denoising_batch:
-        #     self.x_t_latent_buffer = None
-        #     self.batch_size = self.frame_bff_size
-        # else:
-        #     self.batch_size = self._denoising_steps_num * self.frame_bff_size
+        self.batch_size = self.denoising_steps_num * self.frame_bff_size
 
-        # initialize buffer for batch denoising
+        # initialize buffers for batch denoising
         if self.denoising_steps_num > 1:
             # FIXME: What if processing is in progress?
             #  We kill the buffer and all partially denoised latents are discarded.
-            self.x_t_latent_buffer = torch.zeros(
-                (
-                    (self._denoising_steps_num - 1) * self.frame_bff_size,
-                    4,
-                    self.latent_height,
-                    self.latent_width,
-                ),
-                dtype=self.dtype,
-                device=self.device,
-            )
-            self.control_states_buffer = None
+            self._initialize_latent_buffer()
+            self._initialize_control_buffer()
         else:
-            self.x_t_latent_buffer = None
+            self.latent_buffer = None
             self.control_states_buffer = None
 
         # update sub timesteps
@@ -251,6 +227,42 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self.set_noise(seed=self.seed)
             self.repeat_prompt()
             self.repeat_image_prompt()
+
+    @torch.inference_mode()
+    def _initialize_latent_buffer(self):
+        self.latent_buffer = torch.zeros(
+            (
+                (self.denoising_steps_num - 1) * self.frame_bff_size,
+                4,
+                self.latent_height,
+                self.latent_width,
+            ),
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+    @torch.inference_mode()
+    def _initialize_control_buffer(self):
+
+        if self.denoising_steps_num <= 1:
+            self.control_states_buffer = None
+            return
+
+        # Dummy inference to get control state shapes
+        # Create a dummy input tensor with the expected input shape
+        dummy_input = torch.zeros(
+            (1, 3, self.height, self.width),
+            dtype=torch.float32,
+            device=self.device
+        )
+
+        # Generate dummy control states to get shapes
+        dummy_control_states = self.generate_control_state(dummy_input)
+
+        # Initialize buffer using existing fit_to_dimension method
+        self.control_states_buffer = self.fit_to_dimension(
+            dummy_control_states, self.denoising_steps_num - 1
+        )
 
     @torch.inference_mode()
     def set_noise(self, seed: int = 1) -> None:
@@ -417,7 +429,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             adapter_state[k] = v * self.control_canny_scale
         # print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
-        return adapter_state
+        return torch.stack(adapter_state).transpose(0, 1)
 
     # repeat image prompt
     def add_noise(
@@ -619,7 +631,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         cross_attention_kwargs = {}
 
         # get previous latent buffer
-        prev_latent_batch = self.x_t_latent_buffer
+        prev_latent_batch = self.latent_buffer
+        prev_control_batch = self.control_states_buffer
 
         # control adapter
         control_states = None
@@ -640,7 +653,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             added_cond_kwargs.update(base_added_cond_kwargs)
 
         # handle batching
-        if self._denoising_steps_num > 1:
+        if self.denoising_steps_num > 1:
 
             # handle noise accumulation
             self.stock_noise = torch.cat(
@@ -652,35 +665,17 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
             # handle control states batching
             if control_states is not None:
-
-                # Initialize buffer on first use
-                if self.control_states_buffer is None:
-                    self.control_states_buffer = [
-                        self.fit_to_dimension(state, self._denoising_steps_num - 1)
-                        for state in control_states
-                    ]
-
-                # Concatenate current control states with buffer
-                control_states = [
-                    torch.cat([state, buffered_state], dim=0)
-                    for state, buffered_state in zip(control_states, self.control_states_buffer)
-                ]
+                control_states = torch.cat([control_states, prev_control_batch], dim=0)
 
         else:
             # Single-step: Reset stock_noise to prevent accumulation
             if self.cfg_type == "self" or self.cfg_type == "initialize":
-
                 # Reset stock_noise for single-step to prevent accumulation
                 self.stock_noise = self.init_noise.clone()
-
 
         # prepare arguments for unet
         t_list = self.sub_timesteps_pt
         t_list = t_list.to(self.device)
-
-        down_intrablock_additional_residuals = None
-        if control_states is not None:
-            down_intrablock_additional_residuals = [s.clone() for s in control_states]
 
         # unet
         x_0_pred_batch, model_pred = self.unet_step(
@@ -688,11 +683,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             t_list,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            down_intrablock_additional_residuals=down_intrablock_additional_residuals
+            down_intrablock_additional_residuals=control_states
         )
 
         # handle batching for next iteration
-        if self._denoising_steps_num > 1:
+        if self.denoising_steps_num > 1:
 
             # get latest denoised latent
             x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
@@ -708,9 +703,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
             # update control states buffer for next iteration
             if control_states is not None and self.control_states_buffer is not None:
-                self.control_states_buffer = [
-                    state[1:] for state in control_states
-                ]
+                # CHANGE: Slice tensor along batch dimension (dim=0) - standard PyTorch convention
+                self.control_states_buffer = control_states[1:, ...]
         else:
 
             x_0_pred_out = x_0_pred_batch

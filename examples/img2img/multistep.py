@@ -86,8 +86,8 @@ for b in batch_sizes:
 
     print(f'Preparing for {b=}, {stream.t_list=}')
     stream.t_list = timesteps[:b]
-    stream._denoising_steps_num = len(stream.t_list)
-    stream.batch_size = stream._denoising_steps_num
+    stream.denoising_steps_num = len(stream.t_list)
+    stream.batch_size = stream.denoising_steps_num
     stream.set_noise(
         num_inference_steps=100,
         seed=123
@@ -99,7 +99,7 @@ for b in batch_sizes:
     stream.set_image_prompt_scale(0.9)
 
     print(f'Generating for {b=}, {stream.t_list=}')
-    for step in range(stream._denoising_steps_num - 1):
+    for step in range(stream.denoising_steps_num - 1):
         stream(input_image, encode_input=True, decode_output=True)
     img_pt = stream(input_image, encode_input=True, decode_output=True)
     img_pil = postprocess_image(img_pt)[0]

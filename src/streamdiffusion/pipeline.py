@@ -693,12 +693,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # get latest denoised latent
             x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
             if self.do_add_noise:
-                self.x_t_latent_buffer = (
+                self.latent_buffer = (
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                         + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
                 )
             else:
-                self.x_t_latent_buffer = (
+                self.latent_buffer = (
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                 )
 

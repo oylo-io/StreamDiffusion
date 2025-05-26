@@ -18,6 +18,9 @@ class T2IAdapterUNetWrapper:
         self.unet.forward = self.forward
         self.unet.forward = types.MethodType(self.forward, self)    # Bind our forward method to the UNet instance
 
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
     def forward(
             self,
             sample: torch.Tensor,
@@ -28,8 +31,6 @@ class T2IAdapterUNetWrapper:
             attention_mask: Optional[torch.Tensor] = None,
             cross_attention_kwargs: Optional[Dict[str, Any]] = None,
             added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-            down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-            mid_block_additional_residual: Optional[torch.Tensor] = None,
             control_state_0: Optional[torch.Tensor] = None,
             control_state_1: Optional[torch.Tensor] = None,
             control_state_2: Optional[torch.Tensor] = None,

@@ -244,7 +244,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     @torch.inference_mode()
     def _initialize_control_buffer(self):
 
-        if self.denoising_steps_num <= 1:
+        if self.control_adapter is None or self.denoising_steps_num <= 1:
             self.control_states_buffer = None
             return
 

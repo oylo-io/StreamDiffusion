@@ -424,12 +424,29 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         adapter_state = self.control_adapter(canny_tensor)
         # print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
-        start_time = time.time()
+        # start_time = time.time()
         for k, v in enumerate(adapter_state):
             adapter_state[k] = v * self.control_canny_scale
         # print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
-        return torch.stack(adapter_state).transpose(0, 1)
+        # get max channels
+        max_channels = max(state.shape[1] for state in adapter_state)
+
+        # Pad each control state to max channels and stack
+        padded_states = []
+        for state in adapter_state:
+            current_channels = state.shape[1]
+            if current_channels < max_channels:
+                # Pad with zeros: (left, right, top, bottom, front, back)
+                # We want to pad the channel dimension (dim=1)
+                padding = max_channels - current_channels
+                padded_state = torch.nn.functional.pad(state, (0, 0, 0, 0, 0, padding))
+            else:
+                padded_state = state
+            padded_states.append(padded_state)
+
+        # Stack along new dimension: [batch, num_layers, max_channels, height, width]
+        return torch.stack(padded_states, dim=1)
 
     # repeat image prompt
     def add_noise(
@@ -703,7 +720,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
             # update control states buffer for next iteration
             if control_states is not None and self.control_states_buffer is not None:
-                # CHANGE: Slice tensor along batch dimension (dim=0) - standard PyTorch convention
                 self.control_states_buffer = control_states[1:, ...]
         else:
 

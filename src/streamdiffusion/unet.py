@@ -192,9 +192,15 @@ class T2IAdapterUNetWrapper:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 # For t2i-adapter CrossAttnDownBlock2D
                 additional_residuals = {}
-                if is_adapter:
-                    additional_residuals["additional_residuals"] = down_intrablock_additional_residuals[control_idx]
-                    control_idx += 1
+                if is_adapter and down_intrablock_additional_residuals is not None:
+                    # Use sample's channel count to slice appropriate channels from padded control
+                    sample_channels = sample.shape[1]  # Current layer's channel count
+                    batch_idx = torch.arange(sample.shape[0], device=sample.device)
+
+                    # Slice: [batch, layer_idx, :sample_channels, H, W]
+                    control_residual = down_intrablock_additional_residuals[batch_idx, control_idx, :sample_channels, ...]
+                    additional_residuals["additional_residuals"] = control_residual
+                    control_idx = control_idx + 1  # Increment tensor
 
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
@@ -207,9 +213,17 @@ class T2IAdapterUNetWrapper:
                 )
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
-                if is_adapter:
-                    sample += down_intrablock_additional_residuals[control_idx]
-                    control_idx += 1
+                if is_adapter and down_intrablock_additional_residuals is not None:
+
+                    # Use sample's channel count to slice appropriate channels from padded control
+                    sample_channels = sample.shape[1]  # Current layer's channel count
+                    batch_idx = torch.arange(sample.shape[0], device=sample.device)
+                    layer_idx = control_idx  # Current control layer index
+
+                    # Slice: [batch, layer_idx, :sample_channels, H, W]
+                    control_residual = down_intrablock_additional_residuals[batch_idx, layer_idx, :sample_channels, ...]
+                    sample = sample + control_residual
+                    control_idx = control_idx + 1  # Increment tensor
 
             down_block_res_samples += res_samples
 

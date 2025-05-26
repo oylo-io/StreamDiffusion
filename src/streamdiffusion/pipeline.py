@@ -259,10 +259,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # Generate dummy control states to get shapes
         dummy_control_states = self.generate_control_state(dummy_input)
 
-        # Initialize buffer using existing fit_to_dimension method
-        self.control_states_buffer = self.fit_to_dimension(
-            dummy_control_states, self.denoising_steps_num - 1
-        )
+        # Create buffers for each control layer
+        self.control_buffers = {}
+        for layer_name, control_tensor in dummy_control_states.items():
+            self.control_buffers[layer_name] = self.fit_to_dimension(control_tensor, self.denoising_steps_num - 1)
 
     @torch.inference_mode()
     def set_noise(self, seed: int = 1) -> None:
@@ -421,32 +421,15 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     xs=[canny_tensor, depth_tensor, pose_tensor],
         #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
         # )
-        adapter_state = self.control_adapter(canny_tensor)
+        adapter_states = self.control_adapter(canny_tensor)
         # print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
         # start_time = time.time()
-        for k, v in enumerate(adapter_state):
-            adapter_state[k] = v * self.control_canny_scale
+        for k, v in enumerate(adapter_states):
+            adapter_states[f"control_state_{k}"] = v * self.control_canny_scale
         # print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
-        # get max channels
-        max_channels = max(state.shape[1] for state in adapter_state)
-
-        # Pad each control state to max channels and stack
-        padded_states = []
-        for state in adapter_state:
-            current_channels = state.shape[1]
-            if current_channels < max_channels:
-                # Pad with zeros: (left, right, top, bottom, front, back)
-                # We want to pad the channel dimension (dim=1)
-                padding = max_channels - current_channels
-                padded_state = torch.nn.functional.pad(state, (0, 0, 0, 0, 0, padding))
-            else:
-                padded_state = state
-            padded_states.append(padded_state)
-
-        # Stack along new dimension: [batch, num_layers, max_channels, height, width]
-        return torch.stack(padded_states, dim=1)
+        return adapter_states
 
     # repeat image prompt
     def add_noise(
@@ -681,8 +664,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
 
             # handle control states batching
-            if control_states is not None:
-                control_states = torch.cat([control_states, prev_control_batch], dim=0)
+            if control_states is not None and prev_control_batch is not None:
+                for layer_name, control_tensor in control_states.items():
+                    control_states[layer_name] = torch.cat([control_tensor, self.control_states_buffer[layer_name]], dim=0)
 
         else:
             # Single-step: Reset stock_noise to prevent accumulation
@@ -700,7 +684,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             t_list,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            down_intrablock_additional_residuals=control_states
+            **control_states if control_states else {}
         )
 
         # handle batching for next iteration
@@ -718,13 +702,14 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                 )
 
-            # update control states buffer for next iteration
-            if control_states is not None and self.control_states_buffer is not None:
-                self.control_states_buffer = control_states[1:, ...]
+            # Update control buffers for next iteration
+            if control_states is not None and self.control_states_buffer:
+                for layer_name, control_tensor in control_states.items():
+                    self.control_states_buffer[layer_name] = control_tensor[1:, ...]
         else:
 
             x_0_pred_out = x_0_pred_batch
-            self.x_t_latent_buffer = None
+            self.latent_buffer = None
             self.control_states_buffer = None
 
         return x_0_pred_out

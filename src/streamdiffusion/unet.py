@@ -30,7 +30,10 @@ class T2IAdapterUNetWrapper:
             added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
             down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
             mid_block_additional_residual: Optional[torch.Tensor] = None,
-            down_intrablock_additional_residuals: Optional[torch.Tensor] = None,
+            control_state_0: Optional[torch.Tensor] = None,
+            control_state_1: Optional[torch.Tensor] = None,
+            control_state_2: Optional[torch.Tensor] = None,
+            control_state_3: Optional[torch.Tensor] = None,
             encoder_attention_mask: Optional[torch.Tensor] = None,
             return_dict: bool = True,
     ) -> Union[UNet2DConditionOutput, Tuple]:
@@ -168,39 +171,22 @@ class T2IAdapterUNetWrapper:
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
 
-        is_controlnet = mid_block_additional_residual is not None and down_block_additional_residuals is not None
-        # using new arg down_intrablock_additional_residuals for T2I-Adapters, to distinguish from controlnets
-        is_adapter = down_intrablock_additional_residuals is not None
-        control_idx = torch.tensor(0) if is_adapter else None
-        # maintain backward compatibility for legacy usage, where
-        #       T2I-Adapter and ControlNet both use down_block_additional_residuals arg
-        #       but can only use one or the other
-        if not is_adapter and mid_block_additional_residual is None and down_block_additional_residuals is not None:
-            deprecate(
-                "T2I should not use down_block_additional_residuals",
-                "1.3.0",
-                "Passing intrablock residual connections with `down_block_additional_residuals` is deprecated \
-                       and will be removed in diffusers 1.3.0.  `down_block_additional_residuals` should only be used \
-                       for ControlNet. Please make sure use `down_intrablock_additional_residuals` instead. ",
-                standard_warn=False,
-            )
-            down_intrablock_additional_residuals = down_block_additional_residuals
-            is_adapter = True
+        # Organize control states in order
+        control_states = [control_state_0, control_state_1, control_state_2, control_state_3]
+        is_adapter = any(c is not None for c in control_states)
 
         down_block_res_samples = (sample,)
-        for downsample_block in self.down_blocks:
+        for i, downsample_block in enumerate(self.down_blocks):
+
+            current_control = None
+            if is_adapter and i < len(control_states):
+                current_control = control_states[i]
+
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 # For t2i-adapter CrossAttnDownBlock2D
                 additional_residuals = {}
-                if is_adapter and down_intrablock_additional_residuals is not None:
-                    # Use sample's channel count to slice appropriate channels from padded control
-                    sample_channels = sample.shape[1]  # Current layer's channel count
-                    batch_idx = torch.arange(sample.shape[0], device=sample.device)
-
-                    # Slice: [batch, layer_idx, :sample_channels, H, W]
-                    control_residual = down_intrablock_additional_residuals[batch_idx, control_idx, :sample_channels, ...]
-                    additional_residuals["additional_residuals"] = control_residual
-                    control_idx = control_idx + 1  # Increment tensor
+                if is_adapter and current_control is not None:
+                    additional_residuals["additional_residuals"] = current_control
 
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
@@ -213,30 +199,10 @@ class T2IAdapterUNetWrapper:
                 )
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
-                if is_adapter and down_intrablock_additional_residuals is not None:
-
-                    # Use sample's channel count to slice appropriate channels from padded control
-                    sample_channels = sample.shape[1]  # Current layer's channel count
-                    batch_idx = torch.arange(sample.shape[0], device=sample.device)
-                    layer_idx = control_idx  # Current control layer index
-
-                    # Slice: [batch, layer_idx, :sample_channels, H, W]
-                    control_residual = down_intrablock_additional_residuals[batch_idx, layer_idx, :sample_channels, ...]
-                    sample = sample + control_residual
-                    control_idx = control_idx + 1  # Increment tensor
+                if is_adapter and current_control is not None:
+                    sample = sample + current_control
 
             down_block_res_samples += res_samples
-
-        if is_controlnet:
-            new_down_block_res_samples = ()
-
-            for down_block_res_sample, down_block_additional_residual in zip(
-                    down_block_res_samples, down_block_additional_residuals
-            ):
-                down_block_res_sample = down_block_res_sample + down_block_additional_residual
-                new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
-
-            down_block_res_samples = new_down_block_res_samples
 
         # 4. mid
         if self.mid_block is not None:
@@ -253,12 +219,8 @@ class T2IAdapterUNetWrapper:
                 sample = self.mid_block(sample, emb)
 
             # To support T2I-Adapter-XL
-            if is_adapter:
-                sample += down_intrablock_additional_residuals[control_idx]
-                control_idx += 1
-
-        if is_controlnet:
-            sample = sample + mid_block_additional_residual
+            if is_adapter and control_states:
+                sample = sample + control_states[-1]
 
         # 5. up
         for i, upsample_block in enumerate(self.up_blocks):

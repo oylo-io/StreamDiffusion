@@ -18,6 +18,9 @@ class T2IAdapterUNetWrapper:
         self.unet.forward = self.forward
         self.unet.forward = types.MethodType(self.forward, self)    # Bind our forward method to the UNet instance
 
+    def __getattr__(self, name):
+        return getattr(self.unet, name)
+
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 

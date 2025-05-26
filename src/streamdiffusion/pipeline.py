@@ -677,7 +677,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # prepare arguments for unet
         t_list = self.sub_timesteps_pt
         t_list = t_list.to(self.device)
-        down_intrablock_additional_residuals = [s.clone() for s in control_states]
+
+        down_intrablock_additional_residuals = None
+        if control_states is not None:
+            down_intrablock_additional_residuals = [s.clone() for s in control_states]
 
         # unet
         x_0_pred_batch, model_pred = self.unet_step(

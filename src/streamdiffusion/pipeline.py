@@ -287,7 +287,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # projecting image embedding through ip adapter weights
         self.cached_ip_embeds = self.ip_projection(image_embeds)[0]
-        self.cached_ip_embeds = self.cached_ip_embeds.unsqueeze(0) # add batch dimension
+        # self.cached_ip_embeds = self.cached_ip_embeds.unsqueeze(0) # add batch dimension
 
         # repeat to fit batch size
         self.repeat_image_prompt()

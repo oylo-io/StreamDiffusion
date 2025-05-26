@@ -524,7 +524,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         t_list: Union[torch.Tensor, list[int]],
         added_cond_kwargs,
         cross_attention_kwargs,
-        down_intrablock_additional_residuals = None
+        control_states = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
@@ -542,8 +542,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             encoder_hidden_states=self.cached_prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            down_intrablock_additional_residuals=down_intrablock_additional_residuals,
             return_dict=False,
+            **control_states if control_states is not None else {}
         )[0]
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
@@ -684,7 +684,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             t_list,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            **control_states if control_states else {}
+            control_states=control_states
         )
 
         # handle batching for next iteration

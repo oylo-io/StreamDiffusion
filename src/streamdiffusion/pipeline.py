@@ -424,12 +424,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         adapter_states = self.control_adapter(canny_tensor)
         # print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
-        # start_time = time.time()
+        adapter_state_dict = {}
         for k, v in enumerate(adapter_states):
-            adapter_states[f"control_state_{k}"] = v * self.control_canny_scale
+            adapter_state_dict[f"control_state_{k}"] = v * self.control_canny_scale
         # print(f"Adapter state processing took {time.time() - start_time:.4f} seconds.")
 
-        return adapter_states
+        return adapter_state_dict
 
     # repeat image prompt
     def add_noise(

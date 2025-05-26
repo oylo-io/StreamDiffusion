@@ -252,7 +252,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # Create a dummy input tensor with the expected input shape
         dummy_input = torch.zeros(
             (1, 3, self.height, self.width),
-            dtype=torch.float32,
+            dtype=self.dtype,
             device=self.device
         )
 

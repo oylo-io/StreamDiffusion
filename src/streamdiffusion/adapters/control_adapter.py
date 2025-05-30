@@ -3,8 +3,8 @@ import torch
 from kornia.filters import canny
 from kornia.enhance import adjust_contrast
 
-# from transformers import pipeline
-# from controlnet_aux import OpenposeDetector
+from transformers import pipeline
+from controlnet_aux import OpenposeDetector
 
 
 class CannyFeatureExtractor:
@@ -36,29 +36,29 @@ class CannyFeatureExtractor:
         return edges_3ch
 
 
-# class DepthFeatureExtractor:
-#     def __init__(self, device, model_id="LiheYoung/depth-anything-base-hf"):
-#
-#         self.device = device
-#         self.model_id = model_id
-#
-#         # load depth estimator
-#         self.depth_estimator = pipeline(
-#             task="depth-estimation",
-#             model=model_id,
-#             device=device
-#         )
-#
-#     def generate(self, image):
-#         depth_map = self.depth_estimator(image)["depth"]
-#         return depth_map
-#
-#
-# class PoseFeatureExtractor:
-#     def __init__(self, device):
-#         self.device = device
-#         self.detector = OpenposeDetector.from_pretrained('lllyasviel/Annotators')
-#
-#     def generate(self, image):
-#         pose_image = self.detector(image, include_hands=True, include_face=True)  # Include hands and face for better control
-#         return pose_image
+class DepthFeatureExtractor:
+    def __init__(self, device, model_id="LiheYoung/depth-anything-base-hf"):
+
+        self.device = device
+        self.model_id = model_id
+
+        # load depth estimator
+        self.depth_estimator = pipeline(
+            task="depth-estimation",
+            model=model_id,
+            device=device
+        )
+
+    def generate(self, image):
+        depth_map = self.depth_estimator(image)["depth"]
+        return depth_map
+
+
+class PoseFeatureExtractor:
+    def __init__(self, device):
+        self.device = device
+        self.detector = OpenposeDetector.from_pretrained('lllyasviel/Annotators')
+
+    def generate(self, image):
+        pose_image = self.detector(image, include_hands=True, include_face=True)  # Include hands and face for better control
+        return pose_image

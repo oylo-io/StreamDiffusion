@@ -93,9 +93,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.control_adapter = None
         self.canny_feature_extractor = None
         self.control_canny_scale = 1.0
-        # self.depth_feature_extractor = None
+        self.depth_feature_extractor = None
+        self.control_depth_scale = 1.0
         # self.pose_feature_extractor = None
-        # self.control_depth_scale = 1.0
         # self.control_openpose_scale = 1.0
 
         # guidance
@@ -161,23 +161,23 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             self,
             wrap_unet: bool,
             canny_model = "TencentARC/t2i-adapter-canny-sdxl-1.0",
-            depth_model = "TencentARC/t2i-adapter-depth-zoe-sdxl-1.0",
+            depth_model = "TencentARC/t2i-adapter-depth-midas-sdxl-1.0",
             openpose_model="TencentARC/t2i-adapter-openpose-sdxl-1.0",
     ):
 
         # load feature extractors
         self.canny_feature_extractor = CannyFeatureExtractor(self.device)
-        # self.depth_feature_extractor = DepthFeatureExtractor(self.device if self.device == "cuda" else "cpu")
+        self.depth_feature_extractor = DepthFeatureExtractor(self.device if self.device == "cuda" else "cpu")
         # self.pose_feature_extractor = PoseFeatureExtractor(self.device)
 
         # Load adapters
-        self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=self.dtype).to(self.device)
-        # self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=self.dtype).to(self.device)
-        # self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype).to(self.device)
+        self.canny_adapter = T2IAdapter.from_pretrained(canny_model, torch_dtype=self.dtype, variant="fp16").to(self.device)
+        self.depth_adapter = T2IAdapter.from_pretrained(depth_model, torch_dtype=self.dtype, variant="fp16").to(self.device)
+        # self.openpose_adapter = T2IAdapter.from_pretrained(openpose_model, torch_dtype=self.dtype, variant="fp16").to(self.device)
 
         # Create adapter
-        # self.control_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter, self.openpose_adapter]).to(self.device)
-        self.control_adapter = self.canny_adapter
+        self.control_adapter = MultiAdapter(adapters=[self.depth_adapter, self.canny_adapter]).to(self.device)
+        # self.control_adapter = self.canny_adapter
 
         # wrap unet with T2IAdapter wrapper
         if wrap_unet:
@@ -383,9 +383,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # import time  # Import time module for timing
 
         # Generate depth
-        # start_time = time.time()
-        # depth_image = self.depth_feature_extractor.generate(image)
-        # print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
+        start_time = time.time()
+        depth_image = self.depth_feature_extractor.generate(image_tensor)
+        print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # Generate pose
         # start_time = time.time()
@@ -403,7 +403,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # Convert images to tensors
         # start_time = time.time()
-        # depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
+        depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
         # print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
 
         # start_time = time.time()
@@ -417,16 +417,16 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
 
         start_time = time.time()
-        # adapter_state = self.control_multi_adapter(
-        #     xs=[canny_tensor, depth_tensor, pose_tensor],
-        #     adapter_weights=[self.control_canny_scale, self.control_depth_scale, self.control_openpose_scale]
-        # )
-        adapter_states = self.control_adapter(canny_tensor)
+        adapter_states = self.control_adapter(
+            xs=[canny_tensor, depth_tensor], #, pose_tensor],
+            adapter_weights=[self.control_canny_scale, self.control_depth_scale] # , self.control_openpose_scale]
+        )
+        # adapter_states = self.control_adapter(canny_tensor)
         print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
 
         adapter_state_dict = {}
         for k, v in enumerate(adapter_states):
-            adapter_state_dict[f"control_state_{k}"] = v * self.control_canny_scale
+            adapter_state_dict[f"control_state_{k}"] = v  # * self.control_canny_scale
 
         return adapter_state_dict
 

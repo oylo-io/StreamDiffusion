@@ -14,7 +14,7 @@ from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
-from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor
+from streamdiffusion.adapters.control_adapter import CannyFeatureExtractor, DepthFeatureExtractor
 from streamdiffusion.unet import T2IAdapterUNetWrapper
 
 

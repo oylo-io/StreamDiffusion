@@ -167,7 +167,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # load feature extractors
         self.canny_feature_extractor = CannyFeatureExtractor(self.device)
-        self.depth_feature_extractor = DepthFeatureExtractor(self.device if self.device == "cuda" else "cpu")
+        self.depth_feature_extractor = DepthFeatureExtractor(device=self.device, dtype=self.dtype)
         # self.pose_feature_extractor = PoseFeatureExtractor(self.device)
 
         # Load adapters
@@ -380,11 +380,16 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     @torch.inference_mode()
     def generate_control_state(self, image_tensor):
-        # import time  # Import time module for timing
+
+        # Generate canny
+        start_time = time.time()
+        canny_pt = self.canny_feature_extractor.generate(image_tensor)
+        print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # Generate depth
         start_time = time.time()
-        depth_image = self.depth_feature_extractor.generate(image_tensor)
+        depth_pt = self.depth_feature_extractor.generate(image_tensor)
+        depth_pt = self._process_depth_for_adapter(depth_pt)
         print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
 
         # Generate pose
@@ -392,33 +397,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # pose_image = self.pose_feature_extractor.generate(image)
         # print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
 
-        # image to tensor
-        # start_time = time.time()
-        # image_tensor = T.ToTensor()(image).unsqueeze(0).to(self.device)
-        # print(f"Image to tensor conversion took {time.time() - start_time:.4f} seconds.")
-
-        start_time = time.time()
-        canny_tensor = self.canny_feature_extractor.generate(image_tensor)
-        print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
-
-        # Convert images to tensors
-        # start_time = time.time()
-        depth_tensor = self.pre_process_image(depth_image.convert("RGB"), depth_image.height, depth_image.width, for_sd=False)
-        # print(f"Depth image preprocessing took {time.time() - start_time:.4f} seconds.")
-
-        # start_time = time.time()
-        # pose_tensor = self.pre_process_image(pose_image.convert("RGB"), pose_image.height, pose_image.width, for_sd=False)
-        # print(f"Pose image preprocessing took {time.time() - start_time:.4f} seconds.")
-
-        # start_time = time.time()
-        # depth_tensor = depth_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
-        # canny_tensor = canny_tensor.to(device=self.device, dtype=self.control_adapter.dtype)
-        # pose_tensor = pose_tensor.to(device=self.device, dtype=self.control_multi_adapter.dtype)
-        # print(f"Tensor to device conversion took {time.time() - start_time:.4f} seconds.")
-
         start_time = time.time()
         adapter_states = self.control_adapter(
-            xs=[canny_tensor, depth_tensor], #, pose_tensor],
+            xs=[canny_pt, depth_pt], #, pose_tensor],
             adapter_weights=[self.control_canny_scale, self.control_depth_scale] # , self.control_openpose_scale]
         )
         # adapter_states = self.control_adapter(canny_tensor)
@@ -429,6 +410,33 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             adapter_state_dict[f"control_state_{k}"] = v  # * self.control_canny_scale
 
         return adapter_state_dict
+
+    def _process_depth_for_adapter(self, depth_tensor_raw):
+        """
+        Convert depth tensor from OptimizedDepthFeatureExtractor to T2I Adapter format.
+
+        Args:
+            depth_tensor_raw: torch.Tensor [B,1,H,W] in range [0,255] from depth extractor
+
+        Returns:
+            torch.Tensor: [B,3,H,W] in range [0,1] for T2I Adapter
+        """
+        # Remove the single channel dimension: [B,1,H,W] -> [B,H,W]
+        if depth_tensor_raw.dim() == 4 and depth_tensor_raw.shape[1] == 1:
+            depth_tensor = depth_tensor_raw.squeeze(1)
+        else:
+            depth_tensor = depth_tensor_raw
+
+        # Normalize from [0,255] to [0,1]
+        depth_normalized = depth_tensor / 255.0
+
+        # Convert grayscale to RGB by repeating channels: [B,H,W] -> [B,3,H,W]
+        depth_rgb = depth_normalized.unsqueeze(1).repeat(1, 3, 1, 1)
+
+        # Ensure correct device and dtype
+        depth_rgb = depth_rgb.to(device=self.device, dtype=self.dtype)
+
+        return depth_rgb
 
     # repeat image prompt
     def add_noise(

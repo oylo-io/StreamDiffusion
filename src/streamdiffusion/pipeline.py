@@ -113,8 +113,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.denoising_steps_num = len(t_index_list)
         self.batch_size = self.denoising_steps_num * frame_buffer_size
 
-        print(f'StreamDiffusion initialized: {self.is_sdxl=}')
-
     @property
     def is_sdxl(self):
         return type(self.pipe) is StableDiffusionXLPipeline
@@ -510,7 +508,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # else:
         x_t_latent_plus_uc = x_t_latent
 
-        print(f'StreamDiffusion unet params: {added_cond_kwargs=}')
         model_pred = self.unet(
             x_t_latent_plus_uc,
             t_list,

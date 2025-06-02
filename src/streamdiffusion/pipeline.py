@@ -629,6 +629,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # image-prompt adapter
         if self.cached_ip_strength is not None and self.cached_ip_embeds is not None:
+            print(f"DEBUG: batch_size={self.batch_size}")
+            print(f"DEBUG: ip_embeds.shape={self.cached_ip_embeds.shape}")
+            print(f"DEBUG: ip_strength={self.cached_ip_strength}")
             added_cond_kwargs["image_embeds"] = self.cached_ip_embeds
             cross_attention_kwargs["ip_adapter_scale"] = self.cached_ip_strength
 

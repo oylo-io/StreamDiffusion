@@ -68,20 +68,26 @@ def patch_attention_processors(pipe):
 
     # Get all the processors
     processors = pipe.unet.attn_processors
+    print(f"DEBUG: Total processors found: {len(processors)}")
 
     # We need to include ALL processors in our update, not just the ones we're changing
     all_processors = {}
+    replaced_count = 0
+    kept_count = 0
 
     # Prepare the complete processors dictionary
     for key, processor in processors.items():
 
         # Check if this processor needs to be replaced
         proc_cls = type(processor)
+        print(f"DEBUG: {key}: {proc_cls}")
+        
         if proc_cls not in processor_mapping:
-
             # copy processor as-is
             all_processors[key] = processor
+            kept_count += 1
         else:
+            print(f"DEBUG: Replacing {key} with custom processor")
             # Determine device of the original processor
             device = processor.to_k_ip[0].weight.device if len(processor.to_k_ip) > 0 else "cpu"
 
@@ -100,6 +106,9 @@ def patch_attention_processors(pipe):
 
             # store the new processor
             all_processors[key] = new_processor
+            replaced_count += 1
+
+    print(f"DEBUG: Replaced {replaced_count} processors, kept {kept_count} processors")
 
     # set all processors to the model
     pipe.unet.set_attn_processor(all_processors)

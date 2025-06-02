@@ -27,7 +27,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         device: Optional[str] = None,
         vae_scale_factor: Optional[int] = 8,
-        original_inference_steps: Optional[int] = 50
+        original_inference_steps: Optional[int] = 50,
+        delta: float = None
     ) -> None:
 
         # compute
@@ -47,8 +48,20 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.vae = pipe.vae
         self.text_encoder = pipe.text_encoder
         # self.image_processor = VaeImageProcessor(self.vae_scale_factor)
-        self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
-        self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
+        # Create proper config copy and apply SDXL-specific adjustments
+        scheduler_config = self.pipe.scheduler.config.copy()
+        scheduler_config['original_inference_steps'] = original_inference_steps
+        
+        # SDXL models need specific beta schedule for optimal LCM performance
+        if self.is_sdxl:
+            # Ensure SDXL uses proper beta values for noise scheduling
+            scheduler_config['beta_start'] = 0.00085
+            scheduler_config['beta_end'] = 0.012
+            # SDXL works better with epsilon prediction type for LCM
+            if 'prediction_type' in scheduler_config:
+                scheduler_config['prediction_type'] = 'epsilon'
+                
+        self.scheduler = LCMScheduler.from_config(scheduler_config)
 
         # noise scheduler
         self.seed = 1
@@ -96,6 +109,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # guidance
         self.cfg_type = cfg_type
+        # Set delta based on model type if not specified
+        if delta is None:
+            self.delta = 1.2 if self.is_sdxl else 1.5
+        else:
+            self.delta = delta
         self.init_noise = None
         self.stock_noise = None
         self.c_out = None
@@ -537,7 +555,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     )
         # else:
         if self.cfg_type == "self" or self.cfg_type == "initialize":
-            noise_pred_uncond = self.stock_noise * 1.5
+            noise_pred_uncond = self.stock_noise * self.delta
             model_pred = noise_pred_uncond + 1.0 * (noise_pred_text - noise_pred_uncond)
         else:
             model_pred = noise_pred_text

@@ -615,6 +615,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     def predict_x0_batch(self, x_t_latent: torch.Tensor,) -> torch.Tensor:
 
+        # Ensure embeddings match current batch size before inference
+        # This prevents tensor shape mismatches when timesteps change dynamically
+        self.repeat_prompt()
+        self.repeat_image_prompt()
+
         # prepare args for unet
         added_cond_kwargs = {}
         cross_attention_kwargs = {}

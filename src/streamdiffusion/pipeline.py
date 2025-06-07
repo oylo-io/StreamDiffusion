@@ -158,9 +158,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def load_controlnet_adapter(self, control_type: Literal["canny", "depth"]):
 
         # model_id
-        model_id = f'UmerHA/Testing-ConrolNetXS-SDXL-{control_type}'
+        model_id = f'UmerHA/Testing-ConrolNetXS-SD2.1-{control_type}'
         if self.is_sdxl:
-            model_id = f'UmerHA/Testing-ConrolNetXS-SD2.1-{control_type}'
+            model_id = f'UmerHA/Testing-ConrolNetXS-SDXL-{control_type}'
 
         # load adapter
         self.control_adapter = ControlNetXSAdapter.from_pretrained(

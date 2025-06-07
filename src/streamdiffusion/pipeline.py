@@ -509,7 +509,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         x_t_latent_plus_uc = x_t_latent
 
         if controlnet_cond is not None:
-            print(f'Control Shapes: {controlnet_cond.shape=}, {conditioning_scale=}')
             model_pred = self.unet(
                 x_t_latent,
                 t_list,

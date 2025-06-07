@@ -84,6 +84,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.ip_feature_extractor = None
 
         # control
+        self.control_adapter = None
         # self.canny_adapter = None
         # self.depth_adapter = None
         # self.openpose_adapter = None
@@ -154,22 +155,21 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_projection_layer = self._convert_ip_adapter_image_proj_to_diffusers(state_dict, low_cpu_mem_usage=low_cpu_mem_usage)
         self.ip_projection = MultiIPAdapterImageProjection([image_projection_layer]).to(self.device, dtype=self.dtype)
 
-    def load_controlnet_adapter(
-            self,
-            size_ratio: float = 0.5,  # or specific block_out_channels
-    ):
-        """Load ControlNet-XS adapter"""
-        self.control_adapter = ControlNetXSAdapter.from_unet(
-            unet=self.pipe.unet,
-            size_ratio=size_ratio
-        ).to(self.device, dtype=self.dtype)
-        # self.control_adapter = ControlNetXSAdapter.from_pretrained(
-        #     "UmerHA/Testing-ConrolNetXS-SDXL-canny",
-        #     torch_dtype=torch.float16,
-        #     use_safetensors=True
-        # ).to(self.device)
+    def load_controlnet_adapter(self, control_type: Literal["canny", "depth"]):
 
-        # Re-create the fused UNet
+        # model_id
+        model_id = f'UmerHA/Testing-ConrolNetXS-SDXL-{control_type}'
+        if self.is_sdxl:
+            model_id = f'UmerHA/Testing-ConrolNetXS-SD2.1-{control_type}'
+
+        # load adapter
+        self.control_adapter = ControlNetXSAdapter.from_pretrained(
+            model_id,
+            torch_dtype=self.dtype,
+            use_safetensors=True
+        ).to(self.device)
+
+        # Create fused UNet
         self.unet = UNetControlNetXSModel.from_unet(
             unet=self.pipe.unet,
             controlnet=self.control_adapter

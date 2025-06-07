@@ -110,6 +110,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # batching
         self.latent_buffer = None
+        self.control_buffer = None
         self.frame_bff_size = frame_buffer_size
         self.denoising_steps_num = len(t_index_list)
         self.batch_size = self.denoising_steps_num * frame_buffer_size
@@ -203,8 +204,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # FIXME: What if processing is in progress?
             #  We kill the buffer and all partially denoised latents are discarded.
             self._initialize_latent_buffer()
+            self._initialize_control_buffer()
         else:
             self.latent_buffer = None
+            self.control_buffer = None
 
         # update sub timesteps
         self.sub_timesteps = [self.timesteps[t] for t in t_list]
@@ -239,28 +242,18 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             device=self.device,
         )
 
-    # @torch.inference_mode()
-    # def _initialize_control_buffer(self):
-    #
-    #     if self.control_adapter is None or self.denoising_steps_num <= 1:
-    #         self.control_states_buffer = None
-    #         return
-    #
-    #     # Dummy inference to get control state shapes
-    #     # Create a dummy input tensor with the expected input shape
-    #     dummy_input = torch.zeros(
-    #         (1, 3, self.height, self.width),
-    #         dtype=self.dtype,
-    #         device=self.device
-    #     )
-    #
-    #     # Generate dummy control states to get shapes
-    #     dummy_control_states = self.generate_control_state(dummy_input)
-    #
-    #     # Create buffers for each control layer
-    #     self.control_buffers = {}
-    #     for layer_name, control_tensor in dummy_control_states.items():
-    #         self.control_buffers[layer_name] = self.fit_to_dimension(control_tensor, self.denoising_steps_num - 1)
+    @torch.inference_mode()
+    def _initialize_control_buffer(self):
+        self.control_buffer = torch.zeros(
+            (
+                (self.denoising_steps_num - 1) * self.frame_bff_size,
+                3,
+                self.height,
+                self.width
+            ),
+            dtype=self.dtype,
+            device=self.device,
+        )
 
     @torch.inference_mode()
     def set_noise(self, seed: int = 1) -> None:
@@ -516,6 +509,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         x_t_latent_plus_uc = x_t_latent
 
         if controlnet_cond is not None:
+            print(f'Control Shapes: {controlnet_cond.shape=}, {conditioning_scale=}')
             model_pred = self.unet(
                 x_t_latent,
                 t_list,
@@ -615,14 +609,15 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor, controlnet_cond: torch.Tensor, conditioning_scale: float) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control_cond: torch.Tensor, conditioning_scale: float) -> torch.Tensor:
 
         # prepare args for unet
         added_cond_kwargs = {}
         cross_attention_kwargs = {}
 
-        # get previous latent buffer
+        # get previous batch buffers
         prev_latent_batch = self.latent_buffer
+        prev_control_batch = self.control_buffer
 
         # image-prompt adapter
         if self.cached_ip_strength is not None and self.cached_ip_embeds is not None:
@@ -645,8 +640,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
             )
 
-            # handle latent batching
+            # handle batching
             x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
+            control_cond = torch.cat((control_cond, prev_control_batch), dim=0)
 
         else:
             # Single-step: Reset stock_noise to prevent accumulation
@@ -664,7 +660,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             t_list,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            controlnet_cond=controlnet_cond,
+            controlnet_cond=control_cond,
             conditioning_scale=conditioning_scale
         )
 
@@ -673,6 +669,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
             # get latest denoised latent
             x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
+
+            # update latent buffer
             if self.do_add_noise:
                 self.latent_buffer = (
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
@@ -682,6 +680,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 self.latent_buffer = (
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                 )
+
+            # update control buffer
+            self.control_buffer = control_cond[:-1]
+
         else:
 
             x_0_pred_out = x_0_pred_batch

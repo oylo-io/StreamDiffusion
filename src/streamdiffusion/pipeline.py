@@ -14,6 +14,8 @@ from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
+from streamdiffusion.adapters.control_adapter import TensorUNetControlNetXSModel
+
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
     def __init__(
@@ -161,7 +163,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         ).to(self.device)
 
         # Create fused UNet
-        self.unet = UNetControlNetXSModel.from_unet(
+        self.unet = TensorUNetControlNetXSModel.from_unet(
             unet=self.pipe.unet,
             controlnet=self.control_adapter
         ).to(self.device, dtype=self.dtype)

@@ -3,7 +3,6 @@ from typing import List, Optional, Union, Tuple, Literal
 
 import torch
 import PIL.Image
-from diffusers.models.controlnets.controlnet import ControlNetConditioningEmbedding
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -11,7 +10,8 @@ from huggingface_hub import hf_hub_download
 from compel import Compel, ReturnedEmbeddingsType
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
-from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, ControlNetXSAdapter
+from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, ControlNetXSAdapter, \
+    UNet2DConditionModel
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
@@ -164,11 +164,14 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             use_safetensors=True
         ).to(self.device)
 
-        # Create fused UNet
-        self.unet = TensorUNetControlNetXSModel.from_unet(
-            unet=self.pipe.unet,
-            controlnet=self.control_adapter
-        ).to(self.device, dtype=self.dtype)
+        # check if vanilla unet
+        if isinstance(self.unet, UNet2DConditionModel):
+
+            # fuse control layers
+            self.unet = TensorUNetControlNetXSModel.from_unet(
+                unet=self.pipe.unet,
+                controlnet=self.control_adapter
+            ).to(self.device, dtype=self.dtype)
 
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):

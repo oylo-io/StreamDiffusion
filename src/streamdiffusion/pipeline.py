@@ -164,22 +164,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             use_safetensors=True
         ).to(self.device)
 
-        # self.control_adapter.con
-
         # Create fused UNet
         self.unet = TensorUNetControlNetXSModel.from_unet(
             unet=self.pipe.unet,
             controlnet=self.control_adapter
         ).to(self.device, dtype=self.dtype)
-
-    def prepare_control_image(self, control_image: torch.Tensor) -> torch.Tensor:
-        """Process control image for ControlNet-XS"""
-        # Assuming control_image is already the right format [B, C, H, W]
-        # ControlNet-XS expects images in range [0, 1], not [-1, 1]
-        if control_image.min() < 0:
-            control_image = (control_image + 1.0) / 2.0
-
-        return control_image.to(device=self.device, dtype=self.dtype)
 
     @torch.inference_mode()
     def set_timesteps(self, t_list: List[int]):
@@ -241,10 +230,11 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     @torch.inference_mode()
     def _initialize_control_buffer(self):
+        channels = self.control_adapter.config.block_out_channels[0]
         self.control_buffer = torch.zeros(
             (
                 (self.denoising_steps_num - 1) * self.frame_bff_size,
-                4,
+                channels,
                 self.latent_height,
                 self.latent_width,
             ),
@@ -676,7 +666,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # Process control image if provided
         control_cond = None
         if control_image is not None:
-            control_cond = self.prepare_control_image(control_image)
+            control_cond = self.generate_control_embedding(control_image)
 
         # check if input should be encoded
         if encode_input:

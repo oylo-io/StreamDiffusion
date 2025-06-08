@@ -85,16 +85,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # control
         self.control_adapter = None
-        # self.canny_adapter = None
-        # self.depth_adapter = None
-        # self.openpose_adapter = None
-        # self.control_adapter = None
-        # self.canny_feature_extractor = None
-        # self.control_canny_scale = 1.0
-        # self.depth_feature_extractor = None
-        # self.control_depth_scale = 1.0
-        # self.pose_feature_extractor = None
-        # self.control_openpose_scale = 1.0
+        self.cached_control_strength = None
 
         # guidance
         self.cfg_type = cfg_type
@@ -306,6 +297,10 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.cached_ip_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
 
     @torch.inference_mode()
+    def set_control_scale(self, scale: float):
+        self.cached_control_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
+
+    @torch.inference_mode()
     def generate_pipeline_text_prompt_embedding(self, prompt: str):
         return self.pipe.encode_prompt(
             prompt=prompt,
@@ -496,7 +491,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         added_cond_kwargs,
         cross_attention_kwargs,
         controlnet_cond: Optional[torch.Tensor] = None,
-        conditioning_scale: float = 1.0
+        controlnet_cond_scale: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
@@ -506,29 +501,19 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     x_t_latent_plus_uc = torch.concat([x_t_latent, x_t_latent], dim=0)
         #     t_list = torch.concat([t_list, t_list], dim=0)
         # else:
-        x_t_latent_plus_uc = x_t_latent
+        # x_t_latent_plus_uc = x_t_latent
 
-        if controlnet_cond is not None:
-            model_pred = self.unet(
-                x_t_latent,
-                t_list,
-                encoder_hidden_states=self.cached_prompt_embeds,
-                controlnet_cond=controlnet_cond,
-                conditioning_scale=conditioning_scale,
-                added_cond_kwargs=added_cond_kwargs,
-                cross_attention_kwargs=cross_attention_kwargs,
-                apply_control=controlnet_cond is not None,
-                return_dict=False,
-            )[0]
-        else:
-            model_pred = self.unet(
-                x_t_latent_plus_uc,
-                t_list,
-                encoder_hidden_states=self.cached_prompt_embeds,
-                added_cond_kwargs=added_cond_kwargs,
-                cross_attention_kwargs=cross_attention_kwargs,
-                return_dict=False,
-            )[0]
+        model_pred = self.unet(
+            x_t_latent,
+            t_list,
+            encoder_hidden_states=self.cached_prompt_embeds,
+            controlnet_cond=controlnet_cond,
+            conditioning_scale=controlnet_cond_scale,
+            added_cond_kwargs=added_cond_kwargs,
+            cross_attention_kwargs=cross_attention_kwargs,
+            apply_control=True,
+            return_dict=False
+        )[0]
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
         #     noise_pred_text = model_pred[1:]
@@ -608,7 +593,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor, control_cond: torch.Tensor, conditioning_scale: float) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control_cond: torch.Tensor) -> torch.Tensor:
 
         # prepare args for unet
         added_cond_kwargs = {}
@@ -660,7 +645,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
             controlnet_cond=control_cond,
-            conditioning_scale=conditioning_scale
+            controlnet_cond_scale=self.cached_control_strength
         )
 
         # handle batching for next iteration
@@ -695,7 +680,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self,
         input: torch.Tensor = None,
         control_image: torch.Tensor = None,
-        conditioning_scale: float = 0.0,
         encode_input: bool = True,
         decode_output: bool = True
     ) -> torch.Tensor:
@@ -704,7 +688,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         control_cond = None
         if control_image is not None:
             control_cond = self.prepare_control_image(control_image)
-            control_cond = self.fit_to_dimension(control_cond, self.batch_size)
 
         # check if input should be encoded
         if encode_input:
@@ -717,8 +700,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # diffusion
         x_0_pred_out = self.predict_x0_batch(
             x_t_latent,
-            control_cond,
-            conditioning_scale
+            control_cond
         )
 
         # check if output should be decoded

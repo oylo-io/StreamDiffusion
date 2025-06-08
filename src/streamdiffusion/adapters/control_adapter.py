@@ -1,227 +1,263 @@
-import math
+from typing import Union, Optional, Dict, Any, Tuple, List
 
 import torch
-import torch.nn.functional as F
-
-from kornia.filters import canny
-from kornia.enhance import adjust_contrast
-from transformers import pipeline, AutoModelForDepthEstimation, AutoImageProcessor
-# from controlnet_aux import OpenposeDetector
+from diffusers.utils.torch_utils import apply_freeu
+from diffusers.models.controlnets import ControlNetXSOutput
+from diffusers import UNetControlNetXSModel, UNet2DConditionModel
+from diffusers.models.controlnets.controlnet_xs import ControlNetXSAdapter, ControlNetXSCrossAttnUpBlock2D
 
 
-class CannyFeatureExtractor:
+class TensorControlNetXSCrossAttnUpBlock2D(ControlNetXSCrossAttnUpBlock2D):
 
-    def __init__(self, device, low_threshold=0.1, high_threshold=0.2, contrast_factor=1.25):
+    def forward(
+            self,
+            hidden_states: torch.Tensor,
+            res_hidden_states_tuple_base: Tuple[torch.Tensor, ...],
+            res_hidden_states_tuple_ctrl: Tuple[torch.Tensor, ...],
+            temb: torch.Tensor,
+            conditioning_scale: torch.Tensor,
+            encoder_hidden_states: Optional[torch.Tensor] = None,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            upsample_size: Optional[int] = None,
+            encoder_attention_mask: Optional[torch.Tensor] = None,
+            apply_control: bool = True,
+    ) -> torch.Tensor:
 
-        self.device = device
-        self.low_threshold = low_threshold
-        self.high_threshold = high_threshold
-        self.contrast_factor = contrast_factor
+        if cross_attention_kwargs is not None and "scale" in cross_attention_kwargs:
+            cross_attention_kwargs = dict(cross_attention_kwargs)
+            cross_attention_kwargs.pop("scale", None)
 
-    @torch.inference_mode()
-    def generate(self, image_tensor):
-
-        # increase contrast
-        contrasted = adjust_contrast(image_tensor, self.contrast_factor)
-
-        # Apply Canny edge detection
-        edges, _ = canny(
-            contrasted,
-            hysteresis=False,
-            low_threshold=self.low_threshold,
-            high_threshold=self.high_threshold
+        is_freeu_enabled = (
+                getattr(self, "s1", None) is not None
+                and getattr(self, "s2", None) is not None
+                and getattr(self, "b1", None) is not None
+                and getattr(self, "b2", None) is not None
         )
 
-        # Convert to 3-channel format for the adapter
-        edges_3ch = torch.cat([edges, edges, edges], dim=1)
+        def maybe_apply_freeu_to_subblock(hidden_states, res_h_base):
+            if is_freeu_enabled:
+                return apply_freeu(
+                    self.resolution_idx,
+                    hidden_states,
+                    res_h_base,
+                    s1=self.s1,
+                    s2=self.s2,
+                    b1=self.b1,
+                    b2=self.b2,
+                )
+            else:
+                return hidden_states, res_h_base
 
-        return edges_3ch
+        num_layers = len(self.resnets)
+        for i in range(num_layers):
+            resnet = self.resnets[i]
+            attn = self.attentions[i]
+            c2b = self.ctrl_to_base[i]
+
+            reverse_idx = num_layers - 1 - i
+            res_h_base = res_hidden_states_tuple_base[reverse_idx]
+            res_h_ctrl = res_hidden_states_tuple_ctrl[reverse_idx]
+
+            if apply_control:
+                hidden_states += c2b(res_h_ctrl) * conditioning_scale
+
+            hidden_states, res_h_base = maybe_apply_freeu_to_subblock(hidden_states, res_h_base)
+            hidden_states = torch.cat([hidden_states, res_h_base], dim=1)
+
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                hidden_states = self._gradient_checkpointing_func(resnet, hidden_states, temb)
+            else:
+                hidden_states = resnet(hidden_states, temb)
+
+            if attn is not None:
+                hidden_states = attn(
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    attention_mask=attention_mask,
+                    encoder_attention_mask=encoder_attention_mask,
+                    return_dict=False,
+                )[0]
+
+        if self.upsamplers is not None:
+            hidden_states = self.upsamplers(hidden_states, upsample_size)
+
+        return hidden_states
 
 
-class DepthFeatureExtractor:
-    """
-    Fast tensor-to-tensor depth estimation using DepthAnything V2.
+class TensorUNetControlNetXSModel(UNetControlNetXSModel):
 
-    Dynamically adapts to input sizes while respecting model architecture constraints.
-    All preprocessing parameters loaded from model configuration.
+    @classmethod
+    def from_unet(
+            cls,
+            unet: "UNet2DConditionModel",
+            controlnet: Optional["ControlNetXSAdapter"] = None,
+            size_ratio: Optional[float] = None,
+            ctrl_block_out_channels: Optional[List[float]] = None,
+            time_embedding_mix: Optional[float] = None,
+            ctrl_optional_kwargs: Optional[Dict] = None,
+    ):
+        model = super().from_unet(
+            unet=unet,
+            controlnet=controlnet,
+            size_ratio=size_ratio,
+            ctrl_block_out_channels=ctrl_block_out_channels,
+            time_embedding_mix=time_embedding_mix,
+            ctrl_optional_kwargs=ctrl_optional_kwargs,
+        )
 
-    Input: torch.Tensor [B,C,H,W] or [C,H,W] in range [0,1]
-    Output: torch.Tensor [B,1,H,W] depth map in range [0,255]
-    """
+        for up_block in model.up_blocks:
+            up_block.forward = TensorControlNetXSCrossAttnUpBlock2D.forward.__get__(up_block, up_block.__class__)
 
-    # Model variants
-    models = {
-        'small': 'depth-anything/Depth-Anything-V2-Small-hf',
-        'base': 'depth-anything/Depth-Anything-V2-Base-hf',
-        'large': 'depth-anything/Depth-Anything-V2-Large-hf'
-    }
+        return model
 
-    def __init__(self, device="cuda", dtype=torch.float16, variant="small"):
-        self.device = device
-        self.dtype = dtype
+    def forward(
+            self,
+            sample: torch.Tensor,
+            timestep: Union[torch.Tensor, float, int],
+            encoder_hidden_states: torch.Tensor,
+            conditioning_scale: torch.Tensor,
+            controlnet_cond: Optional[torch.Tensor] = None,
+            class_labels: Optional[torch.Tensor] = None,
+            timestep_cond: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+            return_dict: bool = True,
+            apply_control: bool = True,
+    ) -> Union[ControlNetXSOutput, Tuple]:
 
-        # Model mapping
-        model_id = self.models[variant]
+        if cross_attention_kwargs is not None and "scale" in cross_attention_kwargs:
+            cross_attention_kwargs = dict(cross_attention_kwargs)
+            cross_attention_kwargs.pop("scale", None)
 
-        # Load model
-        self.model = AutoModelForDepthEstimation.from_pretrained(
-            model_id,
-            torch_dtype=self.dtype
-        ).to(device=device, dtype=self.dtype)
-        self.model.eval()
+        if self.config.ctrl_conditioning_channel_order == "bgr":
+            controlnet_cond = torch.flip(controlnet_cond, dims=[1])
 
-        # Load preprocessing configuration from the model's image processor
-        print(f"Loading preprocessing config from {model_id}...")
-        processor = AutoImageProcessor.from_pretrained(model_id)
-        config = processor.to_dict()
+        if attention_mask is not None:
+            attention_mask = (1 - attention_mask.to(sample.dtype)) * -10000.0
+            attention_mask = attention_mask.unsqueeze(1)
 
-        # Extract architecture parameters
-        self.patch_size = getattr(self.model.config, 'patch_size', 14)
-        print(f"Model patch size: {self.patch_size}")
+        timesteps = timestep
+        if not torch.is_tensor(timesteps):
+            is_mps = sample.device.type == "mps"
+            is_npu = sample.device.type == "npu"
+            if isinstance(timestep, float):
+                dtype = torch.float32 if (is_mps or is_npu) else torch.float64
+            else:
+                dtype = torch.int32 if (is_mps or is_npu) else torch.int64
+            timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
+        elif len(timesteps.shape) == 0:
+            timesteps = timesteps[None].to(sample.device)
 
-        # Extract preprocessing parameters from official config
-        self.rescale_factor = config.get('rescale_factor', 1.0 / 255.0)
-        self.do_rescale = config.get('do_rescale', True)
-        self.do_normalize = config.get('do_normalize', True)
+        timesteps = timesteps.expand(sample.shape[0])
+        t_emb = self.base_time_proj(timesteps)
+        t_emb = t_emb.to(dtype=sample.dtype)
 
-        # Get normalization parameters from model config (not hard-coded!)
-        image_std = config.get('image_std')     #, [0.229, 0.224, 0.225])
-        image_mean = config.get('image_mean')   #, [0.485, 0.456, 0.406])
-
-        print(f"Preprocessing config:")
-        print(f"  - Rescale factor: {self.rescale_factor}")
-        print(f"  - Normalize: {self.do_normalize}")
-        print(f"  - Image mean: {image_mean}")
-        print(f"  - Image std: {image_std}")
-
-        # Convert to tensors for efficiency
-        self.std = torch.tensor(image_std, dtype=dtype, device=device).view(1, 3, 1, 1)
-        self.mean = torch.tensor(image_mean, dtype=dtype, device=device).view(1, 3, 1, 1)
-
-    def _get_optimal_size(self, input_size):
-        """
-        Calculate optimal processing size based on input and model constraints.
-
-        Args:
-            input_size: (H, W) tuple of input dimensions
-
-        Returns:
-            (H, W) tuple of optimal processing size
-        """
-        height, width = input_size
-
-        # Round up to nearest multiple of patch_size
-        def round_up_to_multiple(value, multiple):
-            return math.ceil(value / multiple) * multiple
-
-        optimal_height = round_up_to_multiple(height, self.patch_size)
-        optimal_width = round_up_to_multiple(width, self.patch_size)
-
-        # For very small images, ensure minimum reasonable size
-        min_size = self.patch_size * 16  # At least 16 patches per dimension
-        optimal_height = max(optimal_height, min_size)
-        optimal_width = max(optimal_width, min_size)
-
-        return (optimal_height, optimal_width)
-
-    def _preprocess(self, tensor):
-        """
-        Preprocess input tensor using dynamic sizing and model config.
-
-        Steps:
-        1. Ensure correct device/dtype
-        2. Calculate optimal size based on input and model constraints
-        3. Resize if needed
-        4. Apply normalization from model config
-        """
-        # Store original size for output resizing
-        original_size = (tensor.shape[2], tensor.shape[3])
-
-        # Ensure correct device and dtype
-        tensor = tensor.to(device=self.device, dtype=self.dtype)
-
-        # Calculate optimal processing size
-        optimal_size = self._get_optimal_size(original_size)
-
-        # Resize only if necessary
-        if original_size != optimal_size:
-            print(f"Resizing from {original_size} to {optimal_size} (divisible by patch_size={self.patch_size})")
-            tensor = F.interpolate(tensor, size=optimal_size, mode='bilinear', align_corners=False)
+        if self.config.ctrl_learn_time_embedding and apply_control:
+            ctrl_temb = self.ctrl_time_embedding(t_emb, timestep_cond)
+            base_temb = self.base_time_embedding(t_emb, timestep_cond)
+            interpolation_param = self.config.time_embedding_mix ** 0.3
+            temb = ctrl_temb * interpolation_param + base_temb * (1 - interpolation_param)
         else:
-            print(f"Input size {original_size} already optimal for patch_size={self.patch_size}")
+            temb = self.base_time_embedding(t_emb)
 
-        # Apply normalization from model config
-        if self.do_normalize:
-            tensor = (tensor - self.mean) / self.std
+        aug_emb = None
+        if self.config.addition_embed_type is None:
+            pass
+        elif self.config.addition_embed_type == "text_time":
+            if added_cond_kwargs is None:
+                raise ValueError(f"{self.__class__} has addition_embed_type='text_time' but added_cond_kwargs is None")
+            if "text_embeds" not in added_cond_kwargs:
+                raise ValueError(f"{self.__class__} requires 'text_embeds' in added_cond_kwargs")
+            text_embeds = added_cond_kwargs.get("text_embeds")
+            if "time_ids" not in added_cond_kwargs:
+                raise ValueError(f"{self.__class__} requires 'time_ids' in added_cond_kwargs")
+            time_ids = added_cond_kwargs.get("time_ids")
+            time_embeds = self.base_add_time_proj(time_ids.flatten())
+            time_embeds = time_embeds.reshape((text_embeds.shape[0], -1))
+            add_embeds = torch.concat([text_embeds, time_embeds], dim=-1)
+            add_embeds = add_embeds.to(temb.dtype)
+            aug_emb = self.base_add_embedding(add_embeds)
+        else:
+            raise ValueError(f"addition_embed_type={self.config.addition_embed_type} not supported")
 
-        return tensor, original_size, optimal_size
+        temb = temb + aug_emb if aug_emb is not None else temb
+        cemb = encoder_hidden_states
 
-    def _postprocess(self, depth_output, target_size, processed_size):
-        """
-        Convert model output to final depth map.
+        h_ctrl = h_base = sample
+        guided_hint = self.controlnet_cond_embedding(controlnet_cond)
 
-        Applies official DepthAnything normalization and resizes to target.
-        """
-        # Ensure proper tensor dimensions: [H,W] → [B,1,H,W]
-        if depth_output.dim() == 2:
-            depth_output = depth_output.unsqueeze(0).unsqueeze(0)
-        elif depth_output.dim() == 3:
-            depth_output = depth_output.unsqueeze(1)
+        h_base = self.base_conv_in(h_base)
+        h_ctrl = self.ctrl_conv_in(h_ctrl)
+        if guided_hint is not None:
+            h_ctrl += guided_hint
+        if apply_control:
+            h_base = h_base + self.control_to_base_for_conv_in(h_ctrl) * conditioning_scale
 
-        # Official DepthAnything normalization formula
-        depth_normalized = depth_output * 255.0 / depth_output.max()
+        skip_connections_base = [h_base]
+        skip_connections_ctrl = [h_ctrl]
 
-        # Resize back to target size if needed
-        if target_size != processed_size:
-            depth_normalized = F.interpolate(
-                depth_normalized, size=target_size, mode='bilinear', align_corners=False
+        for down in self.down_blocks:
+            h_base, h_ctrl, residual_hb, residual_hc = down(
+                hidden_states_base=h_base,
+                hidden_states_ctrl=h_ctrl,
+                temb=temb,
+                encoder_hidden_states=cemb,
+                conditioning_scale=conditioning_scale,
+                cross_attention_kwargs=cross_attention_kwargs,
+                attention_mask=attention_mask,
+                apply_control=apply_control,
+            )
+            for i in range(len(residual_hb)):
+                skip_connections_base.append(residual_hb[i])
+            for i in range(len(residual_hc)):
+                skip_connections_ctrl.append(residual_hc[i])
+
+        h_base, h_ctrl = self.mid_block(
+            hidden_states_base=h_base,
+            hidden_states_ctrl=h_ctrl,
+            temb=temb,
+            encoder_hidden_states=cemb,
+            conditioning_scale=conditioning_scale,
+            cross_attention_kwargs=cross_attention_kwargs,
+            attention_mask=attention_mask,
+            apply_control=apply_control,
+        )
+
+        total_skips = len(skip_connections_base)
+        skip_idx = total_skips
+
+        for up in self.up_blocks:
+            n_resnets = len(up.resnets)
+
+            skips_hb = []
+            skips_hc = []
+            for i in range(n_resnets):
+                idx = skip_idx - n_resnets + i
+                skips_hb.append(skip_connections_base[idx])
+                skips_hc.append(skip_connections_ctrl[idx])
+
+            skip_idx = skip_idx - n_resnets
+
+            h_base = up(
+                hidden_states=h_base,
+                res_hidden_states_tuple_base=tuple(skips_hb),
+                res_hidden_states_tuple_ctrl=tuple(skips_hc),
+                temb=temb,
+                encoder_hidden_states=cemb,
+                conditioning_scale=conditioning_scale,
+                cross_attention_kwargs=cross_attention_kwargs,
+                attention_mask=attention_mask,
+                apply_control=apply_control,
             )
 
-        return torch.clamp(depth_normalized, 0, 255)
+        h_base = self.base_conv_norm_out(h_base)
+        h_base = self.base_conv_act(h_base)
+        h_base = self.base_conv_out(h_base)
 
-    @torch.no_grad()
-    def generate(self, input_tensor, return_original_size=True):
-        """
-        Generate depth map from input tensor.
+        if not return_dict:
+            return (h_base,)
 
-        Args:
-            input_tensor: torch.Tensor [B,C,H,W] or [C,H,W] in range [0,1]
-            return_original_size: If True, resize output to match input size
-
-        Returns:
-            torch.Tensor: Depth map [B,1,H,W] in range [0,255]
-        """
-        # Ensure batch dimension
-        if input_tensor.dim() == 3:
-            input_tensor = input_tensor.unsqueeze(0)
-
-        # # Validate input range
-        # if input_tensor.min() < 0 or input_tensor.max() > 1:
-        #     raise ValueError(
-        #         f"Input tensor must be in [0,1] range, got [{input_tensor.min():.3f}, {input_tensor.max():.3f}]")
-
-        # Preprocess with dynamic sizing
-        processed_tensor, original_size, processed_size = self._preprocess(input_tensor)
-
-        # Model inference
-        outputs = self.model(processed_tensor)
-        depth_raw = outputs.predicted_depth
-
-        # Postprocess
-        target_size = original_size if return_original_size else processed_size
-        depth_final = self._postprocess(depth_raw, target_size, processed_size)
-
-        return depth_final
-
-    def __call__(self, *args, **kwargs):
-        return self.generate(*args, **kwargs)
-
-
-# class PoseFeatureExtractor:
-#     def __init__(self, device):
-#         self.device = device
-#         self.detector = OpenposeDetector.from_pretrained('lllyasviel/Annotators')
-#
-#     def generate(self, image):
-#         pose_image = self.detector(image, include_hands=True, include_face=True)  # Include hands and face for better control
-#         return pose_image
+        return ControlNetXSOutput(sample=h_base)

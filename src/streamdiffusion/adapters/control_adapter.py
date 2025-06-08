@@ -132,9 +132,6 @@ class TensorUNetControlNetXSModel(UNetControlNetXSModel):
             cross_attention_kwargs = dict(cross_attention_kwargs)
             cross_attention_kwargs.pop("scale", None)
 
-        if self.config.ctrl_conditioning_channel_order == "bgr":
-            controlnet_cond = torch.flip(controlnet_cond, dims=[1])
-
         if attention_mask is not None:
             attention_mask = (1 - attention_mask.to(sample.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
@@ -187,12 +184,11 @@ class TensorUNetControlNetXSModel(UNetControlNetXSModel):
         cemb = encoder_hidden_states
 
         h_ctrl = h_base = sample
-        guided_hint = self.controlnet_cond_embedding(controlnet_cond)
 
         h_base = self.base_conv_in(h_base)
         h_ctrl = self.ctrl_conv_in(h_ctrl)
-        if guided_hint is not None:
-            h_ctrl += guided_hint
+        if controlnet_cond is not None:
+            h_ctrl += controlnet_cond
         if apply_control:
             h_base = h_base + self.control_to_base_for_conv_in(h_ctrl) * conditioning_scale
 

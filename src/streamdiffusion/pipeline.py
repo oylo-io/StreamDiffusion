@@ -1,7 +1,9 @@
+import time
 from typing import List, Optional, Union, Tuple, Literal
 
 import torch
 import PIL.Image
+from diffusers.models.controlnets.controlnet import ControlNetConditioningEmbedding
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -9,8 +11,7 @@ from huggingface_hub import hf_hub_download
 from compel import Compel, ReturnedEmbeddingsType
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
-from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, ControlNetXSAdapter, \
-    UNetControlNetXSModel
+from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, ControlNetXSAdapter
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
@@ -87,6 +88,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         # control
         self.control_adapter = None
+        self.control_cond_embedding = None
         self.cached_control_strength = None
 
         # guidance
@@ -161,6 +163,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             torch_dtype=self.dtype,
             use_safetensors=True
         ).to(self.device)
+
+        # self.control_adapter.con
 
         # Create fused UNet
         self.unet = TensorUNetControlNetXSModel.from_unet(
@@ -240,9 +244,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.control_buffer = torch.zeros(
             (
                 (self.denoising_steps_num - 1) * self.frame_bff_size,
-                3,
-                self.height,
-                self.width
+                4,
+                self.latent_height,
+                self.latent_width,
             ),
             dtype=self.dtype,
             device=self.device,
@@ -366,38 +370,21 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
             self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
 
-    # @torch.inference_mode()
-    # def generate_control_state(self, image_tensor):
-    #
-    #     # Generate canny
-    #     start_time = time.time()
-    #     canny_pt = self.canny_feature_extractor.generate(image_tensor)
-    #     print(f"Canny feature extraction took {time.time() - start_time:.4f} seconds.")
-    #
-    #     # Generate depth
-    #     start_time = time.time()
-    #     depth_pt = self.depth_feature_extractor.generate(image_tensor)
-    #     depth_pt = self._process_depth_for_adapter(depth_pt)
-    #     print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
-    #
-    #     # Generate pose
-    #     # start_time = time.time()
-    #     # pose_image = self.pose_feature_extractor.generate(image)
-    #     # print(f"Pose feature extraction took {time.time() - start_time:.4f} seconds.")
-    #
-    #     start_time = time.time()
-    #     adapter_states = self.control_adapter(
-    #         xs=[canny_pt, depth_pt], #, pose_tensor],
-    #         adapter_weights=[self.control_canny_scale, self.control_depth_scale] # , self.control_openpose_scale]
-    #     )
-    #     # adapter_states = self.control_adapter(canny_tensor)
-    #     print(f"Adapter state generation took {time.time() - start_time:.4f} seconds.")
-    #
-    #     adapter_state_dict = {}
-    #     for k, v in enumerate(adapter_states):
-    #         adapter_state_dict[f"control_state_{k}"] = v  # * self.control_canny_scale
-    #
-    #     return adapter_state_dict
+    @torch.inference_mode()
+    def generate_control_embedding(self, image_pt):
+
+        # Generate canny
+        start_time = time.time()
+        control_pt = self.control_adapter.controlnet_cond_embedding(image_pt)
+        print(f"Control adapter embedding took {time.time() - start_time:.4f} seconds.")
+
+        # # Generate depth
+        # start_time = time.time()
+        # depth_pt = self.depth_feature_extractor.generate(image_tensor)
+        # depth_pt = self._process_depth_for_adapter(depth_pt)
+        # print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
+
+        return control_pt
 
     # repeat image prompt
     def add_noise(

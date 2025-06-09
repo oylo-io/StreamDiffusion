@@ -367,9 +367,9 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
     def generate_control_embedding(self, image_pt):
 
         # Generate canny
-        start_time = time.time()
+        # start_time = time.time()
         control_pt = self.control_adapter.controlnet_cond_embedding(image_pt)
-        print(f"Control adapter embedding took {time.time() - start_time:.4f} seconds.")
+        # print(f"Control adapter embedding took {time.time() - start_time:.4f} seconds.")
 
         # # Generate depth
         # start_time = time.time()

@@ -485,16 +485,21 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # else:
         # x_t_latent_plus_uc = x_t_latent
 
+        # control adapter
+        ctl_kwargs = {}
+        if controlnet_cond is not None:
+            ctl_kwargs['controlnet_cond'] = controlnet_cond
+            ctl_kwargs['conditioning_scale'] = controlnet_cond_scale
+            ctl_kwargs['apply_control'] = True
+
         model_pred = self.unet(
             x_t_latent,
             t_list,
             encoder_hidden_states=self.cached_prompt_embeds,
-            controlnet_cond=controlnet_cond,
-            conditioning_scale=controlnet_cond_scale,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            apply_control=True,
-            return_dict=False
+            return_dict=False,
+            **ctl_kwargs
         )[0]
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):

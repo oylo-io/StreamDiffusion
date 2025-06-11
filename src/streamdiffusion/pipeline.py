@@ -619,7 +619,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
             # handle batching
             x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
-            control_cond = torch.cat((control_cond, prev_control_batch), dim=0)
+            if control_cond is not None:
+                control_cond = torch.cat((control_cond, prev_control_batch), dim=0)
 
         else:
             # Single-step: Reset stock_noise to prevent accumulation
@@ -658,7 +659,8 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 )
 
             # update control buffer
-            self.control_buffer = control_cond[:-1]
+            if control_cond is not None:
+                self.control_buffer = control_cond[:-1]
 
         else:
 

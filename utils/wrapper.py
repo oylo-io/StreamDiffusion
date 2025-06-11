@@ -206,7 +206,7 @@ class StreamDiffusionWrapper:
             The delta multiplier of virtual residual noise,
             by default 1.0.
         """
-        self.stream.prepare(
+        self.stream.set_noise(
             prompt,
             negative_prompt,
             num_inference_steps=num_inference_steps,
@@ -661,7 +661,7 @@ class StreamDiffusionWrapper:
         if seed < 0: # Random seed
             seed = np.random.randint(0, 1000000)
 
-        stream.prepare(
+        stream.set_noise(
             "",
             "",
             num_inference_steps=50,

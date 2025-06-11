@@ -1,20 +1,21 @@
+import time
 from typing import List, Optional, Union, Tuple, Literal
 
 import torch
 import PIL.Image
-import numpy as np
-
-from compel import Compel, ReturnedEmbeddingsType
 
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
-from diffusers.image_processor import VaeImageProcessor
+from compel import Compel, ReturnedEmbeddingsType
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.embeddings import MultiIPAdapterImageProjection
-from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler
+from diffusers import StableDiffusionXLPipeline, DiffusionPipeline, LCMScheduler, ControlNetXSAdapter, \
+    UNet2DConditionModel
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img import retrieve_latents
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+
+from streamdiffusion.adapters.control_adapter import TensorUNetControlNetXSModel
 
 
 class StreamDiffusion(UNet2DConditionLoadersMixin):
@@ -26,7 +27,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         width: int = 512,
         height: int = 512,
         do_add_noise: bool = True,
-        use_denoising_batch: bool = True,
         frame_buffer_size: int = 1,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         device: Optional[str] = None,
@@ -37,7 +37,6 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # compute
         self.device = pipe.device if pipe else device
         self.dtype = torch_dtype
-        self.generator = None
 
         # image dimensions
         self.height = height
@@ -46,56 +45,28 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         self.latent_height = int(height // self.vae_scale_factor )
         self.latent_width = int(width // self.vae_scale_factor )
 
-        # text Embeddings
-        self.prompt_embeds = None
-        self.add_text_embeds = None
-        self.add_time_ids = None
-
-        # image Embeddings
-        self.ip_embeds = None
-        self.ip_strength = None
-
-        # guidance
-        self.cfg_type = cfg_type
-        self.alpha_prod_t_sqrt = None
-        self.beta_prod_t_sqrt = None
-
-        # inference steps
-        self.t_list = t_index_list
-        self.do_add_noise = do_add_noise
-
-        # batching
-        self.frame_bff_size = frame_buffer_size
-        self.use_denoising_batch = use_denoising_batch
-        self.denoising_steps_num = len(t_index_list)
-        if use_denoising_batch:
-            self.batch_size = self.denoising_steps_num * frame_buffer_size
-            if self.cfg_type == "initialize":
-                self.trt_unet_batch_size = (
-                    self.denoising_steps_num + 1
-                ) * self.frame_bff_size
-            elif self.cfg_type == "full":
-                self.trt_unet_batch_size = (
-                    2 * self.denoising_steps_num * self.frame_bff_size
-                )
-            else:
-                self.trt_unet_batch_size = self.denoising_steps_num * frame_buffer_size
-        else:
-            self.trt_unet_batch_size = self.frame_bff_size
-            self.batch_size = frame_buffer_size
-
-        # pipe
+        # pipe & components
         self.pipe = pipe
         self.unet = pipe.unet
-        self.sdxl = type(self.pipe) is StableDiffusionXLPipeline
-
-        # vae
         self.vae = pipe.vae
-        self.image_processor = VaeImageProcessor(self.vae_scale_factor)
-
-        # text encoding
         self.text_encoder = pipe.text_encoder
-        if self.sdxl:
+        # self.image_processor = VaeImageProcessor(self.vae_scale_factor)
+        self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
+        self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
+
+        # noise scheduler
+        self.seed = 1
+        self.sub_timesteps = None
+        self.sub_timesteps_pt = None
+        self.noise_generator = torch.Generator()
+        self.scheduler.set_timesteps(original_inference_steps, self.device)
+        self.timesteps = self.scheduler.timesteps.to(self.device)
+
+        # text prompt encoding
+        self.cached_prompt_embeds = None
+        self.cached_add_text_embeds = None
+        self.cached_add_time_ids = None
+        if self.is_sdxl:
             self.compel = Compel(
                 tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
                 text_encoder=[self.pipe.text_encoder, self.pipe.text_encoder_2],
@@ -108,14 +79,41 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
                 text_encoder=self.pipe.text_encoder
             )
 
-        # image encoding
-        self.ip_projection = None
+        # image prompt encoding
+        self.cached_ip_embeds = None
+        self.cached_ip_strength = None
         self.ip_encoder = None
+        self.ip_projection = None
         self.ip_feature_extractor = None
 
-        # scheduler
-        self.pipe.scheduler.config['original_inference_steps'] = original_inference_steps
-        self.scheduler = LCMScheduler.from_config(self.pipe.scheduler.config)
+        # control
+        self.control_adapter = None
+        self.control_cond_embedding = None
+        self.cached_control_strength = None
+
+        # guidance
+        self.cfg_type = cfg_type
+        self.init_noise = None
+        self.stock_noise = None
+        self.c_out = None
+        self.c_skip = None
+        self.alpha_prod_t_sqrt = None
+        self.beta_prod_t_sqrt = None
+
+        # inference steps
+        self.t_list = t_index_list
+        self.do_add_noise = do_add_noise
+
+        # batching
+        self.latent_buffer = None
+        self.control_buffer = None
+        self.frame_bff_size = frame_buffer_size
+        self.denoising_steps_num = len(t_index_list)
+        self.batch_size = self.denoising_steps_num * frame_buffer_size
+
+    @property
+    def is_sdxl(self):
+        return type(self.pipe) is StableDiffusionXLPipeline
 
     @property
     def ip_adapter_loaded(self):
@@ -152,125 +150,118 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_projection_layer = self._convert_ip_adapter_image_proj_to_diffusers(state_dict, low_cpu_mem_usage=low_cpu_mem_usage)
         self.ip_projection = MultiIPAdapterImageProjection([image_projection_layer]).to(self.device, dtype=self.dtype)
 
+    def load_controlnet_adapter(self, control_type: Literal["canny", "depth"]):
+
+        # model_id
+        model_id = f'UmerHA/Testing-ConrolNetXS-SD2.1-{control_type}'
+        if self.is_sdxl:
+            model_id = f'UmerHA/Testing-ConrolNetXS-SDXL-{control_type}'
+
+        # load adapter
+        self.control_adapter = ControlNetXSAdapter.from_pretrained(
+            model_id,
+            torch_dtype=self.dtype,
+            use_safetensors=True
+        ).to(self.device)
+
+        # check if vanilla unet
+        if isinstance(self.unet, UNet2DConditionModel):
+
+            # fuse control layers
+            self.unet = TensorUNetControlNetXSModel.from_unet(
+                unet=self.pipe.unet,
+                controlnet=self.control_adapter
+            ).to(self.device, dtype=self.dtype)
+
     @torch.inference_mode()
-    def prepare(
-        self,
-        num_inference_steps: int = 50,
-        generator: Optional[torch.Generator] = torch.Generator(),
-        seed: int = 1,
-    ) -> None:
+    def set_timesteps(self, t_list: List[int]):
 
-        # init generator (with seed)
-        self.generator = generator
-        self.generator.manual_seed(seed)
+        # check if inference steps have changed
+        denoising_steps_num_changed = False
+        if len(t_list) != len(self.t_list):
+            denoising_steps_num_changed = True
 
-        # initialize x_t_latent (it can be any random tensor)
+        # update members
+        self.t_list = t_list
+        self.denoising_steps_num = len(t_list)
+
+        # update batch size
+        self.batch_size = self.denoising_steps_num * self.frame_bff_size
+
+        # initialize buffers for batch denoising
         if self.denoising_steps_num > 1:
-            self.x_t_latent_buffer = torch.zeros(
-                (
-                    (self.denoising_steps_num - 1) * self.frame_bff_size,
-                    4,
-                    self.latent_height,
-                    self.latent_width,
-                ),
-                dtype=self.dtype,
-                device=self.device,
-            )
+            # FIXME: What if processing is in progress?
+            #  We kill the buffer and all partially denoised latents are discarded.
+            self._initialize_latent_buffer()
+            self._initialize_control_buffer()
         else:
-            self.x_t_latent_buffer = None
+            self.latent_buffer = None
+            self.control_buffer = None
 
-        # if self.cfg_type == "none":
-        #     self.guidance_scale = 1.0
-        # else:
-        #     self.guidance_scale = guidance_scale
-        # self.delta = delta
-
-        # init empty text prompt
-        if self.prompt_embeds is None:
-            self.update_prompt('')
-
-        # init empty image prompt
-        if self.ip_embeds is None and self.ip_adapter_loaded:
-            black_image = PIL.Image.new('RGB', (224, 224), color=0)
-            self.generate_image_embedding(black_image)
-            self.set_image_prompt_scale(0.0)
-
-        # init timesteps
-        self.scheduler.set_timesteps(num_inference_steps, self.device)
-        self.timesteps = self.scheduler.timesteps.to(self.device)
-
-        # make sub timesteps list based on the indices in the t_list list and the values in the timesteps list
-        self.sub_timesteps = []
-        for t in self.t_list:
-            self.sub_timesteps.append(self.timesteps[t])
-
+        # update sub timesteps
+        self.sub_timesteps = [self.timesteps[t] for t in t_list]
         sub_timesteps_tensor = torch.tensor(
             self.sub_timesteps, dtype=torch.long, device=self.device
         )
-        self.sub_timesteps_tensor = torch.repeat_interleave(
+        self.sub_timesteps_pt = torch.repeat_interleave(
             sub_timesteps_tensor,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
+            repeats=self.frame_bff_size,
             dim=0,
         )
+
+        # update scheduler scalings
+        self.scheduler_update_scalings()
+
+        # repeat prompt to match inference steps num
+        if denoising_steps_num_changed:
+            self.set_noise(seed=self.seed)
+            self.repeat_prompt()
+            self.repeat_image_prompt()
+
+    @torch.inference_mode()
+    def _initialize_latent_buffer(self):
+        self.latent_buffer = torch.zeros(
+            (
+                (self.denoising_steps_num - 1) * self.frame_bff_size,
+                4,
+                self.latent_height,
+                self.latent_width,
+            ),
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+    @torch.inference_mode()
+    def _initialize_control_buffer(self):
+        channels = self.control_adapter.config.block_out_channels[0]
+        self.control_buffer = torch.zeros(
+            (
+                (self.denoising_steps_num - 1) * self.frame_bff_size,
+                channels,
+                self.latent_height,
+                self.latent_width,
+            ),
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+    @torch.inference_mode()
+    def set_noise(self, seed: int = 1) -> None:
+
+        # set seed
+        self.seed = seed
+        self.noise_generator.manual_seed(seed)
 
         # init noise
         self.init_noise = torch.randn(
             (self.batch_size, 4, self.latent_height, self.latent_width),
-            generator=generator,
+            generator=self.noise_generator,
         ).to(device=self.device, dtype=self.dtype)
-        self.stock_noise = torch.zeros_like(self.init_noise)
 
-        # mystical things
-        c_skip_list = []
-        c_out_list = []
-        for timestep in self.sub_timesteps:
-            c_skip, c_out = self.scheduler.get_scalings_for_boundary_condition_discrete(
-                timestep
-            )
-            c_skip_list.append(c_skip)
-            c_out_list.append(c_out)
-
-        self.c_skip = (
-            torch.stack(c_skip_list)
-            .view(len(self.t_list), 1, 1, 1)
-            .to(dtype=self.dtype, device=self.device)
-        )
-        self.c_out = (
-            torch.stack(c_out_list)
-            .view(len(self.t_list), 1, 1, 1)
-            .to(dtype=self.dtype, device=self.device)
-        )
-
-        alpha_prod_t_sqrt_list = []
-        beta_prod_t_sqrt_list = []
-        for timestep in self.sub_timesteps:
-            alpha_prod_t_sqrt = self.scheduler.alphas_cumprod[timestep].sqrt()
-            beta_prod_t_sqrt = (1 - self.scheduler.alphas_cumprod[timestep]).sqrt()
-            alpha_prod_t_sqrt_list.append(alpha_prod_t_sqrt)
-            beta_prod_t_sqrt_list.append(beta_prod_t_sqrt)
-        alpha_prod_t_sqrt = (
-            torch.stack(alpha_prod_t_sqrt_list)
-            .view(len(self.t_list), 1, 1, 1)
-            .to(dtype=self.dtype, device=self.device)
-        )
-        beta_prod_t_sqrt = (
-            torch.stack(beta_prod_t_sqrt_list)
-            .view(len(self.t_list), 1, 1, 1)
-            .to(dtype=self.dtype, device=self.device)
-        )
-        self.alpha_prod_t_sqrt = torch.repeat_interleave(
-            alpha_prod_t_sqrt,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
-            dim=0,
-        )
-        self.beta_prod_t_sqrt = torch.repeat_interleave(
-            beta_prod_t_sqrt,
-            repeats=self.frame_bff_size if self.use_denoising_batch else 1,
-            dim=0,
-        )
+        self.stock_noise = self.init_noise.clone()
 
     @torch.inference_mode()
-    def generate_image_embedding(self, image: PIL.Image.Image) -> None:
+    def update_image_prompt(self, image: PIL.Image.Image) -> None:
 
         if not self.ip_adapter_loaded:
             raise ValueError(
@@ -288,17 +279,28 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         image_embeds = self.ip_encoder(image_features).image_embeds
 
         # projecting image embedding through ip adapter weights
-        image_embeds_projected = self.ip_projection(image_embeds)[0]
+        self.cached_ip_embeds = self.ip_projection(image_embeds)[0]
+        # self.cached_ip_embeds = self.cached_ip_embeds.unsqueeze(0) # add batch dimension
+
+        # repeat to fit batch size
+        self.repeat_image_prompt()
+
+    def repeat_image_prompt(self):
 
         # repeat for batching
-        self.ip_embeds = image_embeds_projected.repeat(self.batch_size, 1, 1, 1)
+        if self.cached_ip_embeds is not None:
+            self.cached_ip_embeds = self.fit_to_dimension(self.cached_ip_embeds, self.batch_size)
 
     @torch.inference_mode()
     def set_image_prompt_scale(self, scale: float):
-        self.ip_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
+        self.cached_ip_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
 
     @torch.inference_mode()
-    def generate_prompt_embeddings(self, prompt: str):
+    def set_control_scale(self, scale: float):
+        self.cached_control_strength = torch.tensor([scale], device=self.device, dtype=self.dtype)
+
+    @torch.inference_mode()
+    def generate_pipeline_text_prompt_embedding(self, prompt: str):
         return self.pipe.encode_prompt(
             prompt=prompt,
             device=self.device,
@@ -312,17 +314,17 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         # get embeddings
         embeds = self.compel.build_weighted_embedding(
             prompt=prompt,
-            requires_pooled=self.sdxl
+            requires_pooled=self.is_sdxl
         )
 
         # check for sdxl mode
-        if not self.sdxl:
+        if not self.is_sdxl:
 
             # unpack embeds
             text_embeds = embeds[0]
 
             # repeat embeds for batch size
-            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).unsqueeze(0)
 
         else:
 
@@ -330,21 +332,54 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             text_embeds, pooled_embeds = embeds
 
             # repeat embeds for batch size
-            self.prompt_embeds = text_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1, 1)
+            self.cached_prompt_embeds = text_embeds.to(dtype=self.dtype).unsqueeze(0)
 
             # repeat embeds for batch size
-            self.add_text_embeds = pooled_embeds.to(dtype=self.dtype).repeat(self.batch_size, 1)
+            self.cached_add_text_embeds = pooled_embeds.to(dtype=self.dtype) # .unsqueeze(0)
 
             # Set up the additional time embeddings needed for SDXL
-            self.add_time_ids = self._get_add_time_ids(
+            self.cached_add_time_ids = self._get_add_time_ids(
                 (self.height, self.width),
                 (0, 0),
                 (self.height, self.width)
             ).to(self.device)
 
             # repeat embeds for batch size
-            self.add_time_ids = self.add_time_ids.repeat(self.batch_size, 1)
+            self.cached_add_time_ids = self.cached_add_time_ids # .unsqueeze(0)
 
+        # change dimension to fit batch size
+        self.repeat_prompt()
+
+    def repeat_prompt(self):
+
+        # repeat normal prompt
+        self.cached_prompt_embeds = self.fit_to_dimension(self.cached_prompt_embeds, self.batch_size)
+        # self.cached_prompt_embeds = self.fit_to_dimension(self.cached_prompt_embeds.to(dtype=self.dtype), self.batch_size)
+
+        if self.is_sdxl:
+
+            # repeat sdxl special prompts
+            self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds, self.batch_size)
+            # self.cached_add_text_embeds = self.fit_to_dimension(self.cached_add_text_embeds.to(dtype=self.dtype), self.batch_size)
+            self.cached_add_time_ids = self.fit_to_dimension(self.cached_add_time_ids, self.batch_size)
+
+    @torch.inference_mode()
+    def generate_control_embedding(self, image_pt):
+
+        # Generate canny
+        # start_time = time.time()
+        control_pt = self.control_adapter.controlnet_cond_embedding(image_pt)
+        # print(f"Control adapter embedding took {time.time() - start_time:.4f} seconds.")
+
+        # # Generate depth
+        # start_time = time.time()
+        # depth_pt = self.depth_feature_extractor.generate(image_tensor)
+        # depth_pt = self._process_depth_for_adapter(depth_pt)
+        # print(f"Depth feature extraction took {time.time() - start_time:.4f} seconds.")
+
+        return control_pt
+
+    # repeat image prompt
     def add_noise(
         self,
         original_samples: torch.Tensor,
@@ -379,14 +414,68 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         return denoised_batch
 
+    def scheduler_update_scalings(self):
+
+        # c_skip / c_out
+        c_skip_list = []
+        c_out_list = []
+        for timestep in self.sub_timesteps:
+            c_skip, c_out = self.scheduler.get_scalings_for_boundary_condition_discrete(
+                timestep
+            )
+            c_skip_list.append(c_skip)
+            c_out_list.append(c_out)
+
+        self.c_skip = (
+            torch.stack(c_skip_list)
+            .view(len(self.t_list), 1, 1, 1)
+            .to(dtype=self.dtype, device=self.device)
+        )
+        self.c_out = (
+            torch.stack(c_out_list)
+            .view(len(self.t_list), 1, 1, 1)
+            .to(dtype=self.dtype, device=self.device)
+        )
+
+        # cumprod sqrt
+        alpha_prod_t_sqrt_list = []
+        beta_prod_t_sqrt_list = []
+        for timestep in self.sub_timesteps:
+            alpha_prod_t_sqrt = self.scheduler.alphas_cumprod[timestep].sqrt()
+            beta_prod_t_sqrt = (1 - self.scheduler.alphas_cumprod[timestep]).sqrt()
+            alpha_prod_t_sqrt_list.append(alpha_prod_t_sqrt)
+            beta_prod_t_sqrt_list.append(beta_prod_t_sqrt)
+        alpha_prod_t_sqrt = (
+            torch.stack(alpha_prod_t_sqrt_list)
+            .view(len(self.t_list), 1, 1, 1)
+            .to(dtype=self.dtype, device=self.device)
+        )
+        beta_prod_t_sqrt = (
+            torch.stack(beta_prod_t_sqrt_list)
+            .view(len(self.t_list), 1, 1, 1)
+            .to(dtype=self.dtype, device=self.device)
+        )
+        self.alpha_prod_t_sqrt = torch.repeat_interleave(
+            alpha_prod_t_sqrt,
+            repeats=self.frame_bff_size,
+            dim=0,
+        )
+        self.beta_prod_t_sqrt = torch.repeat_interleave(
+            beta_prod_t_sqrt,
+            repeats=self.frame_bff_size,
+            dim=0,
+        )
+
     def unet_step(
         self,
         x_t_latent: torch.Tensor,
         t_list: Union[torch.Tensor, list[int]],
         added_cond_kwargs,
         cross_attention_kwargs,
-        idx: Optional[int] = None,
+        controlnet_cond: Optional[torch.Tensor] = None,
+        controlnet_cond_scale: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
         #     x_t_latent_plus_uc = torch.concat([x_t_latent[0:1], x_t_latent], dim=0)
         #     t_list = torch.concat([t_list[0:1], t_list], dim=0)
@@ -394,15 +483,23 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #     x_t_latent_plus_uc = torch.concat([x_t_latent, x_t_latent], dim=0)
         #     t_list = torch.concat([t_list, t_list], dim=0)
         # else:
-        x_t_latent_plus_uc = x_t_latent
+        # x_t_latent_plus_uc = x_t_latent
+
+        # control adapter
+        ctl_kwargs = {}
+        if controlnet_cond is not None:
+            ctl_kwargs['controlnet_cond'] = controlnet_cond
+            ctl_kwargs['conditioning_scale'] = controlnet_cond_scale
+            ctl_kwargs['apply_control'] = True
 
         model_pred = self.unet(
-            x_t_latent_plus_uc,
+            x_t_latent,
             t_list,
-            encoder_hidden_states=self.prompt_embeds,
+            encoder_hidden_states=self.cached_prompt_embeds,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
             return_dict=False,
+            **ctl_kwargs
         )[0]
 
         # if self.guidance_scale > 1.0 and (self.cfg_type == "initialize"):
@@ -424,63 +521,53 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
         #         noise_pred_text - noise_pred_uncond
         #     )
         # else:
-        model_pred = noise_pred_text
+        if self.cfg_type == "self" or self.cfg_type == "initialize":
+            noise_pred_uncond = self.stock_noise * 1.5
+            model_pred = noise_pred_uncond + 1.0 * (noise_pred_text - noise_pred_uncond)
+        else:
+            model_pred = noise_pred_text
 
         # compute the previous noisy sample x_t -> x_t-1
-        if self.use_denoising_batch:
-            denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
-            if self.cfg_type == "self" or self.cfg_type == "initialize":
-                scaled_noise = self.beta_prod_t_sqrt * self.stock_noise
-                delta_x = self.scheduler_step_batch(model_pred, scaled_noise, idx)
-                alpha_next = torch.concat(
-                    [
-                        self.alpha_prod_t_sqrt[1:],
-                        torch.ones_like(self.alpha_prod_t_sqrt[0:1]),
-                    ],
-                    dim=0,
-                )
-                delta_x = alpha_next * delta_x
-                beta_next = torch.concat(
-                    [
-                        self.beta_prod_t_sqrt[1:],
-                        torch.ones_like(self.beta_prod_t_sqrt[0:1]),
-                    ],
-                    dim=0,
-                )
-                delta_x = delta_x / beta_next
-                init_noise = torch.concat(
-                    [self.init_noise[1:], self.init_noise[0:1]], dim=0
-                )
-                self.stock_noise = init_noise + delta_x
-
-        else:
-            # denoised_batch = self.scheduler.step(model_pred, t_list[0], x_t_latent).denoised
-            denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent, idx)
+        denoised_batch = self.scheduler_step_batch(model_pred, x_t_latent)
+        if self.cfg_type == "self" or self.cfg_type == "initialize":
+            scaled_noise = self.beta_prod_t_sqrt * self.stock_noise
+            delta_x = self.scheduler_step_batch(model_pred, scaled_noise)
+            alpha_next = torch.concat(
+                [
+                    self.alpha_prod_t_sqrt[1:],
+                    torch.ones_like(self.alpha_prod_t_sqrt[0:1]),
+                ],
+                dim=0,
+            )
+            delta_x = alpha_next * delta_x
+            beta_next = torch.concat(
+                [
+                    self.beta_prod_t_sqrt[1:],
+                    torch.ones_like(self.beta_prod_t_sqrt[0:1]),
+                ],
+                dim=0,
+            )
+            delta_x = delta_x / beta_next
+            init_noise = torch.concat(
+                [self.init_noise[1:], self.init_noise[0:1]], dim=0
+            )
+            self.stock_noise = init_noise + delta_x
 
         return denoised_batch, model_pred
 
     def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size):
-        # passed_add_embed_dim = (
-        #     self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
-        # )
-        # expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
-        #
-        # if expected_add_embed_dim != passed_add_embed_dim:
-        #     raise ValueError(
-        #         f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
-        #     )
-
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
         add_time_ids = torch.tensor([add_time_ids], device=self.device, dtype=self.dtype)
         return add_time_ids
 
     @torch.inference_mode()
-    def encode_image(self, image_tensors: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
-        image_tensors = image_tensors.to(
-            device=self.device,
-            dtype=self.vae.dtype,
-        )
-        img_latent = retrieve_latents(self.vae.encode(image_tensors), self.generator)
+    def encode_image(self, image_tensor: torch.Tensor, add_init_noise: bool = True) -> torch.Tensor:
+
+        # pre-process image
+        # normalize from [0, 1] (PyTorch standard) to [-1, 1] (StableDiffusion standard)
+        sd_image_tensor = image_tensor * 2 - 1
+
+        img_latent = retrieve_latents(self.vae.encode(sd_image_tensor), self.noise_generator)
         img_latent = img_latent * self.vae.config.scaling_factor
 
         if add_init_noise:
@@ -490,107 +577,125 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
     @torch.inference_mode()
     def decode_image(self, x_0_pred_out: torch.Tensor) -> torch.Tensor:
-        output_latent = self.vae.decode(
-            x_0_pred_out / self.vae.config.scaling_factor, return_dict=False
-        )[0]
+        output_latent = self.vae.decode(x_0_pred_out / self.vae.config.scaling_factor, return_dict=False)[0]
         return output_latent
 
-    def predict_x0_batch(self, x_t_latent: torch.Tensor) -> torch.Tensor:
+    def predict_x0_batch(self, x_t_latent: torch.Tensor, control_cond: torch.Tensor) -> torch.Tensor:
+
+        # prepare args for unet
         added_cond_kwargs = {}
         cross_attention_kwargs = {}
-        prev_latent_batch = self.x_t_latent_buffer
 
-        # Add IP-Adapter image-embeds and scale
-        if self.ip_strength is not None and self.ip_embeds is not None:
-            added_cond_kwargs["image_embeds"] = self.ip_embeds
-            cross_attention_kwargs["ip_adapter_scale"] = self.ip_strength
+        # get previous batch buffers
+        prev_latent_batch = self.latent_buffer
+        prev_control_batch = self.control_buffer
 
-        # Handle SDXL specific added conditions
-        if self.sdxl:
+        # image-prompt adapter
+        if self.cached_ip_strength is not None and self.cached_ip_embeds is not None:
+            added_cond_kwargs["image_embeds"] = self.cached_ip_embeds
+            cross_attention_kwargs["ip_adapter_scale"] = self.cached_ip_strength
+
+        # control adapter
+        ctl_kwargs = {}
+        if control_cond is not None:
+            ctl_kwargs['controlnet_cond'] = control_cond
+            ctl_kwargs['controlnet_cond_scale'] = self.cached_control_strength
+
+        # SDXL specific additional conditioning
+        if self.is_sdxl:
             base_added_cond_kwargs = {
-                "text_embeds": self.add_text_embeds,
-                "time_ids": self.add_time_ids
+                "text_embeds": self.cached_add_text_embeds,
+                "time_ids": self.cached_add_time_ids
             }
             added_cond_kwargs.update(base_added_cond_kwargs)
 
-        if self.use_denoising_batch:
-            t_list = self.sub_timesteps_tensor
-            if self.denoising_steps_num > 1:
-                x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
-                self.stock_noise = torch.cat(
-                    (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
-                )
+        # handle batching
+        if self.denoising_steps_num > 1:
 
-            x_t_latent = x_t_latent.to(self.device)
-            t_list = t_list.to(self.device)
-            x_0_pred_batch, model_pred = self.unet_step(
-                x_t_latent,
-                t_list,
-                added_cond_kwargs=added_cond_kwargs,
-                cross_attention_kwargs=cross_attention_kwargs
+            # handle noise accumulation
+            self.stock_noise = torch.cat(
+                (self.init_noise[0:1], self.stock_noise[:-1]), dim=0
             )
 
-            if self.denoising_steps_num > 1:
-                x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
-                if self.do_add_noise:
-                    self.x_t_latent_buffer = (
+            # handle batching
+            x_t_latent = torch.cat((x_t_latent, prev_latent_batch), dim=0)
+            if control_cond is not None:
+                control_cond = torch.cat((control_cond, prev_control_batch), dim=0)
+
+        else:
+            # Single-step: Reset stock_noise to prevent accumulation
+            if self.cfg_type == "self" or self.cfg_type == "initialize":
+                # Reset stock_noise for single-step to prevent accumulation
+                self.stock_noise = self.init_noise.clone()
+
+        # prepare arguments for unet
+        t_list = self.sub_timesteps_pt
+        t_list = t_list.to(self.device)
+
+        # unet
+        x_0_pred_batch, model_pred = self.unet_step(
+            x_t_latent,
+            t_list,
+            added_cond_kwargs=added_cond_kwargs,
+            cross_attention_kwargs=cross_attention_kwargs,
+            **ctl_kwargs
+        )
+
+        # handle batching for next iteration
+        if self.denoising_steps_num > 1:
+
+            # get latest denoised latent
+            x_0_pred_out = x_0_pred_batch[-1].unsqueeze(0)
+
+            # update latent buffer
+            if self.do_add_noise:
+                self.latent_buffer = (
                         self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
                         + self.beta_prod_t_sqrt[1:] * self.init_noise[1:]
-                    )
-                else:
-                    self.x_t_latent_buffer = (
-                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
-                    )
-            else:
-                x_0_pred_out = x_0_pred_batch
-                self.x_t_latent_buffer = None
-        else:
-            self.init_noise = x_t_latent
-            for idx, t in enumerate(self.sub_timesteps_tensor):
-                t = t.view(
-                    1,
-                ).repeat(
-                    self.frame_bff_size,
                 )
-                x_0_pred, model_pred = self.unet_step(x_t_latent, t, idx=idx, added_cond_kwargs=added_cond_kwargs)
-                if idx < len(self.sub_timesteps_tensor) - 1:
-                    if self.do_add_noise:
-                        x_t_latent = self.alpha_prod_t_sqrt[
-                            idx + 1
-                        ] * x_0_pred + self.beta_prod_t_sqrt[
-                            idx + 1
-                        ] * torch.randn_like(
-                            x_0_pred, device=self.device, dtype=self.dtype
-                        )
-                    else:
-                        x_t_latent = self.alpha_prod_t_sqrt[idx + 1] * x_0_pred
-            x_0_pred_out = x_0_pred
+            else:
+                self.latent_buffer = (
+                        self.alpha_prod_t_sqrt[1:] * x_0_pred_batch[:-1]
+                )
+
+            # update control buffer
+            if control_cond is not None:
+                self.control_buffer = control_cond[:-1]
+
+        else:
+
+            x_0_pred_out = x_0_pred_batch
+            self.latent_buffer = None
 
         return x_0_pred_out
 
     @torch.inference_mode()
     def __call__(
         self,
-        x: Union[torch.Tensor, PIL.Image.Image, np.ndarray] = None,
+        input: torch.Tensor = None,
+        control_image: torch.Tensor = None,
         encode_input: bool = True,
         decode_output: bool = True
     ) -> torch.Tensor:
 
-        # pre process
-        x = self.image_processor.preprocess(x, self.height, self.width).to(
-            device=self.device, dtype=self.dtype
-        )
+        # Process control image if provided
+        control_cond = None
+        if control_image is not None:
+            control_cond = self.generate_control_embedding(control_image)
 
         # check if input should be encoded
         if encode_input:
 
             # encode with VAE
-            x_t_latent = self.encode_image(x)
+            x_t_latent = self.encode_image(input)
         else:
-            x_t_latent = x
+            x_t_latent = input
 
         # diffusion
-        x_0_pred_out = self.predict_x0_batch(x_t_latent)
+        x_0_pred_out = self.predict_x0_batch(
+            x_t_latent,
+            control_cond
+        )
 
         # check if output should be decoded
         if decode_output:
@@ -602,49 +707,26 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
 
         return x_output
 
+    @classmethod
+    def fit_to_dimension(cls, tensor, dimension):
 
-    @staticmethod
-    def slerp(v1, v2, t, DOT_THR=0.9995, zdim=-1):
-        """SLERP for pytorch tensors interpolating `v1` to `v2` with scale of `t`.
+        if tensor is None:
+            return None
 
-        `DOT_THR` determines when the vectors are too close to parallel.
-            If they are too close, then a regular linear interpolation is used.
+        # Get the original batch size
+        original_batch_size = tensor.shape[0]
 
-        `zdim` is the feature dimension over which to compute norms and find angles.
-            For example: if a sequence of 5 vectors is input with shape [5, 768]
-            Then `zdim = 1` or `zdim = -1` computes SLERP along the feature dim of 768.
+        # If the original batch size is already equal to the desired dimension, return as is
+        if original_batch_size == dimension:
+            return tensor
 
-        Theory Reference:
-        https://splines.readthedocs.io/en/latest/rotation/slerp.html
-        PyTorch reference:
-        https://discuss.pytorch.org/t/help-regarding-slerp-function-for-generative-model-sampling/32475/3
-        Numpy reference:
-        https://gist.github.com/dvschultz/3af50c40df002da3b751efab1daddf2c
-        """
+        # Take the first element if there are multiple elements in the batch
+        if original_batch_size > 1:
+            tensor = tensor[0].unsqueeze(0)
 
-        # take the dot product between normalized vectors
-        v1_norm = v1 / torch.norm(v1, dim=zdim, keepdim=True)
-        v2_norm = v2 / torch.norm(v2, dim=zdim, keepdim=True)
-        dot = (v1_norm * v2_norm).sum(zdim)
+        # Create a repeat tuple with ones for all dimensions except the first
+        # For a tensor with ndim=3, this creates (dimension, 1, 1)
+        # For a tensor with ndim=4, this creates (dimension, 1, 1, 1)
+        repeat_dims = (dimension,) + (1,) * (tensor.ndim - 1)
 
-        # if the vectors are too close, return a simple linear interpolation
-        if (torch.abs(dot) > DOT_THR).any():
-            print(f'warning: v1 and v2 close to parallel, using linear interpolation instead.')
-            res = (1 - t) * v1 + t * v2
-
-        # else apply SLERP
-        else:
-            # compute the angle terms we need
-            theta = torch.acos(dot)
-            theta_t = theta * t
-            sin_theta = torch.sin(theta)
-            sin_theta_t = torch.sin(theta_t)
-
-            # compute the sine scaling terms for the vectors
-            s1 = torch.sin(theta - theta_t) / sin_theta
-            s2 = sin_theta_t / sin_theta
-
-            # interpolate the vectors
-            res = (s1.unsqueeze(zdim) * v1) + (s2.unsqueeze(zdim) * v2)
-
-        return res
+        return tensor.repeat(*repeat_dims)

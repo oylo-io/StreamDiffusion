@@ -590,6 +590,12 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             added_cond_kwargs["image_embeds"] = self.cached_ip_embeds
             cross_attention_kwargs["ip_adapter_scale"] = self.cached_ip_strength
 
+        # control adapter
+        ctl_kwargs = {}
+        if control_cond is not None:
+            ctl_kwargs['controlnet_cond'] = control_cond
+            ctl_kwargs['controlnet_cond_scale'] = self.cached_control_strength
+
         # SDXL specific additional conditioning
         if self.is_sdxl:
             base_added_cond_kwargs = {
@@ -626,8 +632,7 @@ class StreamDiffusion(UNet2DConditionLoadersMixin):
             t_list,
             added_cond_kwargs=added_cond_kwargs,
             cross_attention_kwargs=cross_attention_kwargs,
-            controlnet_cond=control_cond,
-            controlnet_cond_scale=self.cached_control_strength
+            **ctl_kwargs
         )
 
         # handle batching for next iteration
